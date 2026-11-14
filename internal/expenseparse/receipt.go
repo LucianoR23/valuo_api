@@ -105,7 +105,7 @@ func (p *Parser) ParseReceipt(ctx context.Context, userID, householdID uuid.UUID
 	var ra receiptAnswer
 	err := p.ai.Run(ctx, ai.Request{
 		UserID: userID, HouseholdID: &hh,
-		Task: ai.TaskParseReceipt, Channel: ai.ChannelApp,
+		Task: ai.TaskParseReceipt, Channel: p.channel,
 		PromptVersion: p.receipt.Version, System: p.receipt.System,
 		Parts:           []ai.Part{ai.TextPart("<today>" + day + "</today>"), ai.MediaPart(mimeType, data)},
 		Schema:          receiptSchema,

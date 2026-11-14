@@ -109,6 +109,7 @@ Ver [`.env.example`](./.env.example). Resumen:
 | `GLITCHTIP_ENVIRONMENT` | no (`ENV`) | `staging` / `production` en el dashboard de GlitchTip |
 | `COINGECKO_API_KEY` | no | key demo de CoinGecko (gratis). Precio de bitcoin y ether para "Ver en", como mucho una vez por hora. Vacía = sin BTC/ETH |
 | `INBOUND_DOMAIN` / `INBOUND_HMAC_KEY` / `INBOUND_ENC_KEY` | no | importar gastos reenviando mails (plan 3.5): dominio de las direcciones y dos claves base64 de 32 bytes. Vacías = `/inbound/*` responde 503 |
+| `BOT_TELEGRAM_ENABLED` / `TELEGRAM_BOT_TOKEN` / `TELEGRAM_WEBHOOK_SECRET` / `TELEGRAM_BOT_USERNAME` | no (`false`) | bot de Telegram (plan 3.6). Prendido, las otras tres son obligatorias. Ver `docs/telegram-bot.md` |
 | `AI_ENABLED` | no (`false`) | prende la IA (plan 8.1). Claude para todo salvo el audio, que va a Gemini |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | no | keys de los proveedores de IA. Sin ellas las tareas que los usan fallan y la gente carga a mano |
 | `AI_DAILY_BUDGET_USD` / `AI_USER_DAILY_USD` / `AI_USER_PER_MINUTE` / `AI_USER_PER_DAY` | no (3 / 0.05 / 10 / 100) | topes de IA: gasto diario total y por persona, pedidos por minuto y por día |

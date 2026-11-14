@@ -94,6 +94,10 @@ without superuser. Check with `\du`, `\l valuo_next` and `\ddp`.
 | `INBOUND_LOCAL_PREFIX` | default `in+`: addresses are `in+u_xxx@<INBOUND_DOMAIN>`, routed by one Cloudflare rule for `in@` with subaddressing (no catch-all on subdomains). Setup in `workers/inbound-email/README.md` |
 | `INBOUND_HMAC_KEY` | `openssl rand -base64 32`. Signs the Email Worker's requests and hashes addresses; the Worker gets the same value as its secret |
 | `INBOUND_ENC_KEY` | `openssl rand -base64 32` (exactly 32 bytes). Encrypts the import addresses and pending senders (plan §8b) |
+| `BOT_TELEGRAM_ENABLED` | `true` turns the Telegram bot on (plan 3.6). Default `false`; off, `/telegram/*` answers 503. Setup in `docs/telegram-bot.md` |
+| `TELEGRAM_BOT_TOKEN` | the environment's bot token from @BotFather (staging and production use different bots) |
+| `TELEGRAM_WEBHOOK_SECRET` | `openssl rand -hex 32`. Telegram sends it in `X-Telegram-Bot-Api-Secret-Token` on every update; anything else gets 401 |
+| `TELEGRAM_BOT_USERNAME` | the bot's username without `@`, for the `t.me` link the app opens |
 | `AI_ENABLED` | `true` turns the AI features on (plan 8.1). Default `false` |
 | `ANTHROPIC_API_KEY` | key of the environment's workspace in the Claude Console organization linked to the Claude Max plan. Set a spend limit on that workspace |
 | `GEMINI_API_KEY` | Google AI Studio key, used for audio only. Staging: free tier is fine. Production: paid tier only (the free tier lets Google use the data) |
@@ -362,6 +366,8 @@ gitleaks in CI). Rotation, one at a time:
 | `GEMINI_API_KEY` | new key in Google AI Studio, update, redeploy, delete the old one | none |
 | `INBOUND_HMAC_KEY` | avoid: addresses are found by an HMAC of this key, so a new one loses every user's address. If leaked: new key, delete `inbound_addresses` (people get a new address and update their Gmail forwarding), update the Worker secret | everyone forwards to a new address |
 | `INBOUND_ENC_KEY` | avoid until rotation by `key_id` is built; if leaked, same as `INBOUND_HMAC_KEY` | same |
+| `TELEGRAM_BOT_TOKEN` | @BotFather › the bot › API Token › Revoke, update, redeploy (the webhook is registered again on start) | the bot is silent until redeployed |
+| `TELEGRAM_WEBHOOK_SECRET` | new value, update, redeploy | none (registered on start) |
 | VAPID keys | avoid: new keys invalidate every push subscription | users enable push again |
 | `API_DEPLOY_KEY` (valuo_app CI) | new read-only deploy key on valuo_api, update the secret, delete the old key | none |
 

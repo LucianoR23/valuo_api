@@ -197,3 +197,21 @@ func TestCacheEvictsWhenFull(t *testing.T) {
 		t.Error("expired entry served")
 	}
 }
+
+// The Telegram bot (plan 3.6) records its AI calls under its own channel;
+// the app's parser keeps "app".
+func TestViaRecordsTheChannel(t *testing.T) {
+	f := &fakeAI{answer: `{"intent":"expense","amount":2500,"currency":"","date":"2026-11-11","installments":0,
+		"payment":"","description":"café","shared":false}`}
+	p := newParser(f, nil, at(today))
+	bot := p.Via(ai.ChannelTelegram)
+	if _, err := bot.Parse(context.Background(), user, hh, "dos mil quinientos de café"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Parse(context.Background(), user, hh, "dos mil quinientos de té"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.got) != 2 || f.got[0].Channel != ai.ChannelTelegram || f.got[1].Channel != ai.ChannelApp {
+		t.Fatalf("channels %+v", f.got)
+	}
+}

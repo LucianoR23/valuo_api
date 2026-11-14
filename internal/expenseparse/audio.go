@@ -98,7 +98,7 @@ func (p *Parser) ParseAudio(ctx context.Context, userID, householdID uuid.UUID, 
 	var a audioAnswer
 	err := p.ai.Run(ctx, ai.Request{
 		UserID: userID, HouseholdID: &hh,
-		Task: ai.TaskParseAudio, Channel: ai.ChannelApp,
+		Task: ai.TaskParseAudio, Channel: p.channel,
 		PromptVersion: p.audio.Version, System: p.audio.System,
 		Parts:           []ai.Part{ai.TextPart("<today>" + day + "</today>"), ai.MediaPart(mimeType, data)},
 		Schema:          audioSchema,

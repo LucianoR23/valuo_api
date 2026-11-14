@@ -80,6 +80,9 @@ type Parser struct {
 	receipt ai.Prompt
 	email   ai.Prompt
 	cache   *cache
+	// channel is where the sentences come from, for ai_usage (app unless
+	// Via says otherwise).
+	channel ai.Channel
 	now     func() time.Time
 	loc     *time.Location
 	logger  *slog.Logger
@@ -100,8 +103,16 @@ func New(store Store, r Runner, cats Categorizer, loc *time.Location, now func()
 		store: store, ai: r, cats: cats, prompt: ai.MustPrompt("parse_expense", nil),
 		audio: ai.MustPrompt("parse_audio", nil), receipt: ai.MustPrompt("parse_receipt", nil),
 		email: ai.MustPrompt("parse_email", nil),
-		cache: newCache(cacheTTL, cacheSize, now), now: now, loc: loc, logger: logger,
+		cache: newCache(cacheTTL, cacheSize, now), channel: ai.ChannelApp, now: now, loc: loc, logger: logger,
 	}
+}
+
+// Via returns a parser that records its AI calls under channel (the
+// Telegram bot, plan 3.6). It shares the cache with p.
+func (p *Parser) Via(channel ai.Channel) *Parser {
+	c := *p
+	c.channel = channel
+	return &c
 }
 
 // Parse reads text for userID. householdID is the space whose categories
@@ -230,7 +241,7 @@ func (p *Parser) askAI(ctx context.Context, userID, householdID uuid.UUID, text 
 	var a answer
 	err := p.ai.Run(ctx, ai.Request{
 		UserID: userID, HouseholdID: &hh,
-		Task: ai.TaskParseExpense, Channel: ai.ChannelApp,
+		Task: ai.TaskParseExpense, Channel: p.channel,
 		PromptVersion: p.prompt.Version, System: p.prompt.System,
 		Parts:           []ai.Part{ai.TextPart("<today>" + day + "</today>\n<text>" + string(quoted) + "</text>")},
 		Schema:          schema,

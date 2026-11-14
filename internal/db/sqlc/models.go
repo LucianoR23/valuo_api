@@ -491,19 +491,44 @@ type SettlementPayment struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
+type TelegramDraft struct {
+	ID        uuid.UUID          `json:"id"`
+	UserID    uuid.UUID          `json:"user_id"`
+	ChatID    int64              `json:"chat_id"`
+	MessageID pgtype.Int8        `json:"message_id"`
+	Fields    []byte             `json:"fields"`
+	EditingAt pgtype.Timestamptz `json:"editing_at"`
+	SavedAt   pgtype.Timestamptz `json:"saved_at"`
+	ExpenseID *uuid.UUID         `json:"expense_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type TelegramLink struct {
+	UserID   uuid.UUID          `json:"user_id"`
+	ChatID   int64              `json:"chat_id"`
+	LinkedAt pgtype.Timestamptz `json:"linked_at"`
+}
+
+type TelegramLinkCode struct {
+	CodeHash  []byte             `json:"code_hash"`
+	UserID    uuid.UUID          `json:"user_id"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+}
+
 type User struct {
-	ID              uuid.UUID          `json:"id"`
-	Email           string             `json:"email"`
-	PasswordHash    pgtype.Text        `json:"password_hash"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	FirstName       string             `json:"first_name"`
-	LastName        string             `json:"last_name"`
-	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
-	EmailVerifiedAt pgtype.Timestamptz `json:"email_verified_at"`
-	IsSuperadmin    bool               `json:"is_superadmin"`
-	PendingEmail    pgtype.Text        `json:"pending_email"`
-	OnboardedAt     pgtype.Timestamptz `json:"onboarded_at"`
+	ID               uuid.UUID          `json:"id"`
+	Email            string             `json:"email"`
+	PasswordHash     pgtype.Text        `json:"password_hash"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	FirstName        string             `json:"first_name"`
+	LastName         string             `json:"last_name"`
+	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
+	EmailVerifiedAt  pgtype.Timestamptz `json:"email_verified_at"`
+	IsSuperadmin     bool               `json:"is_superadmin"`
+	PendingEmail     pgtype.Text        `json:"pending_email"`
+	OnboardedAt      pgtype.Timestamptz `json:"onboarded_at"`
+	AiSuspendedUntil pgtype.Timestamptz `json:"ai_suspended_until"`
 }
 
 type UserIdentity struct {

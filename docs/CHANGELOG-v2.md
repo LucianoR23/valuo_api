@@ -4,6 +4,17 @@ Entries reference item IDs from `AHORRA_V2_PLAN.md` (workspace repo).
 
 ## Unreleased
 
+### 3.6 (API part 1): Telegram bot, text expenses
+- Migration 000049 (schema approved by the user): `telegram_links` (one chat per user and one user per chat), `telegram_link_codes` (SHA-256 of one-time codes, 10 minutes), `telegram_drafts` (the expense waiting for ✅; `editing_at` after ✏️, `saved_at` and `expense_id` for `/deshacer`) and `users.ai_suspended_until`, used by part 2.
+- New `internal/telegram`: a small stdlib Bot API client (no new dependency, as with the AI providers), `POST /telegram/webhook` checked with `X-Telegram-Bot-Api-Secret-Token` (401 otherwise, 200 for every update it accepts so Telegram does not resend), and for the app `POST /telegram/link` (verified email; returns the `t.me/<bot>?start=<code>` link), `GET /telegram/link` and `DELETE /telegram/link` (tells the chat).
+- Only linked private chats are served. Any other chat gets one fixed reply at most every 10 minutes, with no AI call (plan §8.1). 20 updates a minute per chat; resent update IDs are ignored.
+- A text is read with the app's parser (`expenseparse.Parser.Via`, AI usage recorded with channel `telegram`) and shown back for confirmation with ✅ ✏️ ❌ (decided with the user). Without a payment method it offers the 6 most used methods as buttons, the ones the words fit first. ✏️ asks for the corrected sentence and the next message replaces the draft. A double ✅ saves once.
+- "Mi plata" by default; "compartido"/"hogar" saves it in the Hogar with a category suggested from that space, as in the app.
+- `/resumen` (last weekly review of "Mi plata"), `/comprometido` (3 months, plan 4.2), `/deshacer` (the last expense saved from Telegram in the last 24 h), `/ayuda`. Voice notes and photos get a fixed "send it as text" reply until part 2.
+- Hourly job `telegram_cleanup`: expired codes and drafts older than 24 h.
+- On start, the API registers the webhook (`API_PUBLIC_URL/telegram/webhook`, only messages and button taps) and the command menu; a failure is logged and the API keeps running.
+- New env: `BOT_TELEGRAM_ENABLED`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_BOT_USERNAME` (validated on start when on). Setup in `docs/telegram-bot.md`; `.env.example`, README and DEPLOY.md (with rotation) updated.
+
 ### 3.5 parked
 - Decided with the user (2026-11-14): import by email is parked; the app part was removed (valuo_app #89). `internal/inbound`, migration 000048 and `workers/inbound-email` stay, off without `INBOUND_*` (the routes answer 503 and no job touches mail). The Worker README says so.
 

@@ -70,7 +70,10 @@ type Querier interface {
 	CategoryHasChildren(ctx context.Context, parentID *uuid.UUID) (bool, error)
 	// A category id sent by a client belongs to that household (plan 0.6).
 	CategoryInHousehold(ctx context.Context, arg CategoryInHouseholdParams) (bool, error)
+	// ✅: only the first tap saves.
+	ClaimTelegramDraft(ctx context.Context, arg ClaimTelegramDraftParams) (TelegramDraft, error)
 	ClearOldAuditIPs(ctx context.Context) (int64, error)
+	ClearTelegramEditing(ctx context.Context, arg ClearTelegramEditingParams) error
 	// Confirma un draft con el monto real. Actualiza amount + amount_base + rate
 	// (recalculados por el service antes de llamar) y pasa el status a confirmed.
 	// Devuelve la fila completa para que el service compare con last_amount y
@@ -145,6 +148,8 @@ type Querier interface {
 	// ===================== recurring_incomes =====================
 	CreateRecurringIncome(ctx context.Context, arg CreateRecurringIncomeParams) (RecurringIncome, error)
 	CreateSettlement(ctx context.Context, arg CreateSettlementParams) (SettlementPayment, error)
+	CreateTelegramDraft(ctx context.Context, arg CreateTelegramDraftParams) (TelegramDraft, error)
+	CreateTelegramLinkCode(ctx context.Context, arg CreateTelegramLinkCodeParams) error
 	// Queries sobre la tabla users.
 	// Formato sqlc: cada query tiene una línea "-- name: NombreFuncion :tipo"
 	// donde :tipo puede ser:
@@ -176,6 +181,7 @@ type Querier interface {
 	// Retention (plan §8b): Gmail codes after a day; resolved, unreadable and
 	// ignored mails after 30 days. Open ones stay until the user acts.
 	DeleteOldInboundMessages(ctx context.Context, arg DeleteOldInboundMessagesParams) (int64, error)
+	DeleteOldTelegramRows(ctx context.Context, arg DeleteOldTelegramRowsParams) (int64, error)
 	DeleteRecurringExpense(ctx context.Context, id uuid.UUID) error
 	DeleteRecurringIncome(ctx context.Context, id uuid.UUID) error
 	DeleteSettlement(ctx context.Context, id uuid.UUID) error
@@ -188,6 +194,10 @@ type Querier interface {
 	DeleteStaleUserSessions(ctx context.Context, userID uuid.UUID) error
 	// Unconfirmed sign-ups older than 30 days (contract section 5).
 	DeleteStaleWaitlistEntries(ctx context.Context) (int64, error)
+	DeleteTelegramDraft(ctx context.Context, arg DeleteTelegramDraftParams) (TelegramDraft, error)
+	DeleteTelegramLink(ctx context.Context, userID uuid.UUID) (int64, error)
+	// ===================== Telegram bot (plan 3.6) =====================
+	DeleteTelegramLinkCodes(ctx context.Context, userID uuid.UUID) error
 	DeleteUserPushSubscriptions(ctx context.Context, userID uuid.UUID) error
 	DeleteWaitlistEntry(ctx context.Context, id uuid.UUID) (int64, error)
 	DeleteWaitlistEntryByEmail(ctx context.Context, email string) (int64, error)
@@ -197,7 +207,10 @@ type Querier interface {
 	// they received, leaving out the ones generated from a recurring entry.
 	// Only onboarded accounts with at least one device to push to.
 	DueDailyReminders(ctx context.Context, arg DueDailyRemindersParams) ([]uuid.UUID, error)
+	// ✏️: the next message replaces this draft. Only one draft waits at a time.
+	EditTelegramDraft(ctx context.Context, arg EditTelegramDraftParams) (TelegramDraft, error)
 	EnsureCardStatement(ctx context.Context, arg EnsureCardStatementParams) error
+	ForgetTelegramDraft(ctx context.Context, id uuid.UUID) error
 	// The shared space ("Hogar") the user belongs to, if any (plan 1.2: at most
 	// one active). Oldest first so accounts from before the rule pick the same.
 	GetActiveSharedHouseholdForUser(ctx context.Context, userID uuid.UUID) (Household, error)
@@ -247,6 +260,8 @@ type Querier interface {
 	GetRecurringIncomeByID(ctx context.Context, id uuid.UUID) (RecurringIncome, error)
 	GetSettlementByID(ctx context.Context, id uuid.UUID) (SettlementPayment, error)
 	GetSplitRule(ctx context.Context, arg GetSplitRuleParams) (HouseholdSplitRule, error)
+	GetTelegramDraft(ctx context.Context, arg GetTelegramDraftParams) (TelegramDraft, error)
+	GetTelegramLink(ctx context.Context, userID uuid.UUID) (TelegramLink, error)
 	// Usado en login. Devuelve pgx.ErrNoRows si no existe → mapeamos a error de dominio.
 	// Filtra soft-deleted: un email anonimizado ya no matchea el formato original
 	// pero además, aunque coincidiera, la fila queda invisible.
@@ -285,6 +300,11 @@ type Querier interface {
 	// Flag global para gatear endpoints /admin/*. Independiente del rol por-hogar.
 	// Se setea manualmente por DB; no hay endpoint para modificarlo.
 	IsUserSuperadmin(ctx context.Context, id uuid.UUID) (bool, error)
+	// /deshacer: the last expense saved from Telegram in the last 24 h.
+	LastTelegramExpense(ctx context.Context, arg LastTelegramExpenseParams) (TelegramDraft, error)
+	// /resumen: the last weekly review of the space.
+	LatestWeeklyReview(ctx context.Context, householdID uuid.UUID) (LatestWeeklyReviewRow, error)
+	LinkTelegram(ctx context.Context, arg LinkTelegramParams) error
 	// Lo usa el worker: plantillas activas cuyo rango cubre `date`. Filtro fino
 	// por frequency/day_of_* se resuelve en Go (mismo patrón que recurring_incomes).
 	ListActiveRecurringExpenses(ctx context.Context, dollar_1 pgtype.Date) ([]RecurringExpense, error)
@@ -469,6 +489,8 @@ type Querier interface {
 	SetPaymentMethodActive(ctx context.Context, arg SetPaymentMethodActiveParams) (PaymentMethod, error)
 	SetRecurringExpenseActive(ctx context.Context, arg SetRecurringExpenseActiveParams) error
 	SetRecurringIncomeActive(ctx context.Context, arg SetRecurringIncomeActiveParams) error
+	SetTelegramDraftExpense(ctx context.Context, arg SetTelegramDraftExpenseParams) error
+	SetTelegramDraftMessage(ctx context.Context, arg SetTelegramDraftMessageParams) error
 	// An email change waiting for the link sent to the new address (plan 0.5).
 	SetUserPendingEmail(ctx context.Context, arg SetUserPendingEmailParams) error
 	// Agrega settlements por par (from, to) para la matriz.
@@ -551,9 +573,18 @@ type Querier interface {
 	// Para gastos NO compartidos (is_shared=false): cuenta el total si el usuario
 	// es created_by, porque no hay filas de shares.
 	SumInstallmentsForUserGoal(ctx context.Context, arg SumInstallmentsForUserGoalParams) (pgtype.Numeric, error)
+	// A code works once, before it expires, for an account that still exists.
+	TakeTelegramLinkCode(ctx context.Context, arg TakeTelegramLinkCodeParams) (uuid.UUID, error)
+	TelegramDraftBeingEdited(ctx context.Context, arg TelegramDraftBeingEditedParams) (TelegramDraft, error)
+	// The person's active methods, most used in the last 90 days first.
+	TelegramMethods(ctx context.Context, arg TelegramMethodsParams) ([]TelegramMethodsRow, error)
+	TelegramUserByChat(ctx context.Context, chatID int64) (uuid.UUID, error)
 	// The categories with the most spending in the range (spent_at), for the
 	// AI summaries (plan 8.2). Base currency.
 	TopCategoriesSpentAtRange(ctx context.Context, arg TopCategoriesSpentAtRangeParams) ([]TopCategoriesSpentAtRangeRow, error)
+	UnclaimTelegramDraft(ctx context.Context, id uuid.UUID) error
+	// Linking a chat already linked to someone else moves it.
+	UnlinkTelegramChat(ctx context.Context, chatID int64) error
 	// Solo permite cambiar el nombre (único campo editable del modelo).
 	UpdateBankName(ctx context.Context, arg UpdateBankNameParams) (Bank, error)
 	// No dejamos cambiar scope/user_id/goal_type — si hay que migrar, borrar y crear.
@@ -585,6 +616,7 @@ type Querier interface {
 	// que se liste la serie aparezca el monto real más reciente sin recomputar.
 	UpdateRecurringExpenseLastAmount(ctx context.Context, arg UpdateRecurringExpenseLastAmountParams) error
 	UpdateRecurringIncome(ctx context.Context, arg UpdateRecurringIncomeParams) (RecurringIncome, error)
+	UpdateTelegramDraftFields(ctx context.Context, arg UpdateTelegramDraftFieldsParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	// Actualiza nombre/apellido/email en una sola query. El caller es
 	// responsable de validar cada uno antes. La colisión de email la captura

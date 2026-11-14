@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -117,6 +118,17 @@ type Config struct {
 	InboundHMACKey     string
 	InboundEncKey      string
 
+	// Telegram bot (plan 3.6). Off unless BOT_TELEGRAM_ENABLED=true; then
+	// the token (from @BotFather), the webhook secret (32+ characters of
+	// A-Z a-z 0-9 _ -) and the bot's username are required. The webhook is
+	// API_PUBLIC_URL/telegram/webhook, registered on start.
+	TelegramEnabled       bool
+	TelegramBotToken      string
+	TelegramWebhookSecret string
+	TelegramBotUsername   string
+	// TelegramAPIBaseURL is for tests; empty is api.telegram.org.
+	TelegramAPIBaseURL string
+
 	// AI layer (plan 8.1). Off unless AI_ENABLED=true. Routes and prices are
 	// parsed by internal/ai; defaults below are the 2026-11-11 choice:
 	// Claude Haiku 5.5 for everything, Gemini 3.5 Flash-Lite for audio.
@@ -165,6 +177,11 @@ func Load() (*Config, error) {
 	}
 
 	brand := getOrDefault("BRAND_NAME", "Valuo")
+
+	telegramEnabled, err := parseBool("BOT_TELEGRAM_ENABLED", false)
+	if err != nil {
+		return nil, err
+	}
 
 	aiEnabled, err := parseBool("AI_ENABLED", false)
 	if err != nil {
@@ -223,6 +240,11 @@ func Load() (*Config, error) {
 		InboundHMACKey:         os.Getenv("INBOUND_HMAC_KEY"),
 		InboundLocalPrefix:     strings.ToLower(strings.TrimSpace(getOrDefault("INBOUND_LOCAL_PREFIX", "in+"))),
 		InboundEncKey:          os.Getenv("INBOUND_ENC_KEY"),
+		TelegramEnabled:        telegramEnabled,
+		TelegramBotToken:       strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
+		TelegramWebhookSecret:  strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_SECRET")),
+		TelegramBotUsername:    strings.TrimPrefix(strings.TrimSpace(os.Getenv("TELEGRAM_BOT_USERNAME")), "@"),
+		TelegramAPIBaseURL:     os.Getenv("TELEGRAM_API_BASE_URL"),
 		AIEnabled:              aiEnabled,
 		AnthropicAPIKey:        os.Getenv("ANTHROPIC_API_KEY"),
 		AnthropicBaseURL:       os.Getenv("ANTHROPIC_BASE_URL"),
@@ -279,6 +301,31 @@ func (c *Config) validate() error {
 	}
 	if len(c.JWTSecret) < 32 {
 		return fmt.Errorf("config: JWT_SECRET debe tener al menos 32 caracteres")
+	}
+	return c.validateTelegram()
+}
+
+var (
+	telegramSecretRE   = regexp.MustCompile(`^[A-Za-z0-9_-]{32,256}$`)
+	telegramUsernameRE = regexp.MustCompile(`^[A-Za-z0-9_]{5,32}$`)
+)
+
+// validateTelegram: with the bot on, every value it needs is set and valid.
+func (c *Config) validateTelegram() error {
+	if !c.TelegramEnabled {
+		return nil
+	}
+	if c.TelegramBotToken == "" {
+		return fmt.Errorf("config: TELEGRAM_BOT_TOKEN es obligatorio con BOT_TELEGRAM_ENABLED=true")
+	}
+	if !telegramSecretRE.MatchString(c.TelegramWebhookSecret) {
+		return fmt.Errorf("config: TELEGRAM_WEBHOOK_SECRET debe tener 32 a 256 caracteres de A-Z a-z 0-9 _ -")
+	}
+	if !telegramUsernameRE.MatchString(c.TelegramBotUsername) {
+		return fmt.Errorf("config: TELEGRAM_BOT_USERNAME debe ser el usuario del bot, sin @")
+	}
+	if !strings.HasPrefix(c.APIPublicURL, "https://") && c.Env == "prod" {
+		return fmt.Errorf("config: API_PUBLIC_URL debe ser https:// con el bot de Telegram")
 	}
 	return nil
 }
