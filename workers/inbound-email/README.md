@@ -1,5 +1,9 @@
 # inbound-email (Cloudflare Email Worker)
 
+> **Parked (2026-11-14).** Import by email is off: no `INBOUND_*` is set and this Worker is
+> not deployed. The app screen was removed (valuo_app #89). See 3.5 in the plan's "Later"
+> section before bringing it back.
+
 Import by forwarded email (plan 3.5). Every person gets an address
 `in+u_<token>@<INBOUND_DOMAIN>`. Cloudflare has no catch-all on a subdomain, so one routing
 rule for `in@<INBOUND_DOMAIN>` sends everything to this Worker; with subaddressing on,
