@@ -4,6 +4,9 @@ Entries reference item IDs from `AHORRA_V2_PLAN.md` (workspace repo).
 
 ## Unreleased
 
+### 3.5 parked
+- Decided with the user (2026-11-14): import by email is parked; the app part was removed (valuo_app #89). `internal/inbound`, migration 000048 and `workers/inbound-email` stay, off without `INBOUND_*` (the routes answer 503 and no job touches mail). The Worker README says so.
+
 ### 3.5 (Worker part): Cloudflare Email Worker
 - Cloudflare has no catch-all on a subdomain, so addresses are now `in+u_xxx@<INBOUND_DOMAIN>` (decided with the user): one routing rule for `in@` sends everything to the Worker through subaddressing. New `INBOUND_LOCAL_PREFIX` (default `in+`); the API also takes the bare token, so the format can change by configuration.
 - `workers/inbound-email`: rejects mails over 768 KB, signs the raw mail and posts it to `POST /inbound/email`; throws on API errors so the sending server retries. No dependencies; `npm test` uses Node's runner. Deployed with `npx wrangler@4.158.0`, never installed globally. Invocation logs off (they would keep senders and recipients).
