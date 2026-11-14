@@ -479,6 +479,21 @@ type RiverQueue struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Rule struct {
+	ID                 uuid.UUID          `json:"id"`
+	HouseholdID        uuid.UUID          `json:"household_id"`
+	CreatedBy          uuid.UUID          `json:"created_by"`
+	MatchText          string             `json:"match_text"`
+	MatchKey           string             `json:"match_key"`
+	PaymentMethodID    *uuid.UUID         `json:"payment_method_id"`
+	MinAmount          pgtype.Numeric     `json:"min_amount"`
+	MaxAmount          pgtype.Numeric     `json:"max_amount"`
+	SetCategoryID      *uuid.UUID         `json:"set_category_id"`
+	SetPaymentMethodID *uuid.UUID         `json:"set_payment_method_id"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
 type SettlementPayment struct {
 	ID           uuid.UUID          `json:"id"`
 	HouseholdID  uuid.UUID          `json:"household_id"`

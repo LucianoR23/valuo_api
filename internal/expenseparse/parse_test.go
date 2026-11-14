@@ -42,12 +42,20 @@ func (f *fakeAI) Run(_ context.Context, req ai.Request, out any) error {
 }
 
 type fakeCats struct {
-	got []string
-	id  uuid.UUID
+	got    []string
+	inputs []categorize.Input
+	id     uuid.UUID
+	// pm makes it answer like a rule that fills the payment method.
+	pm uuid.UUID
 }
 
-func (f *fakeCats) Suggest(_ context.Context, _, _ uuid.UUID, d string) (categorize.Suggestion, bool, error) {
-	f.got = append(f.got, d)
+func (f *fakeCats) SuggestFor(_ context.Context, _, _ uuid.UUID, in categorize.Input) (categorize.Suggestion, bool, error) {
+	f.got = append(f.got, in.Description)
+	f.inputs = append(f.inputs, in)
+	if f.pm != uuid.Nil {
+		pm := f.pm
+		return categorize.Suggestion{CategoryID: f.id, Source: categorize.SourceRule, PaymentMethodID: &pm}, true, nil
+	}
 	return categorize.Suggestion{CategoryID: f.id, Source: categorize.SourceHistory}, f.id != uuid.Nil, nil
 }
 
@@ -213,5 +221,41 @@ func TestViaRecordsTheChannel(t *testing.T) {
 	}
 	if len(f.got) != 2 || f.got[0].Channel != ai.ChannelTelegram || f.got[1].Channel != ai.ChannelApp {
 		t.Fatalf("channels %+v", f.got)
+	}
+}
+
+// A rule of plan 3.8 fills the payment method the sentence did not name,
+// or picks it among the ones the words fit; it never replaces a named one.
+func TestRulePaymentMethod(t *testing.T) {
+	ctx := context.Background()
+	c := &fakeCats{id: uuid.New(), pm: visaSantander.ID}
+	p := newParser(nil, c, at(today))
+
+	res, err := p.Parse(ctx, user, hh, "carrefour 15000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.PaymentMethodID != visaSantander.ID || res.CategoryID != c.id || res.CategorySource != categorize.SourceRule {
+		t.Errorf("not named: %+v", res)
+	}
+	in := c.inputs[0]
+	if in.Amount.String() != "15000" || in.PaymentMethodID != uuid.Nil || in.Channel != ai.ChannelApp {
+		t.Errorf("input %+v", in)
+	}
+
+	res, _ = p.Parse(ctx, user, hh, "carrefour 15000 visa")
+	if res.PaymentMethodID != visaSantander.ID || len(res.Candidates) != 0 {
+		t.Errorf("among candidates: %+v", res)
+	}
+
+	res, _ = p.Parse(ctx, user, hh, "carrefour 15000 efectivo")
+	if res.PaymentMethodID != efectivo.ID {
+		t.Errorf("named: %+v", res)
+	}
+
+	c.pm = master.ID
+	res, _ = p.Parse(ctx, user, hh, "carrefour 16000 visa")
+	if res.PaymentMethodID != uuid.Nil || len(res.Candidates) != 2 {
+		t.Errorf("not among candidates: %+v", res)
 	}
 }
