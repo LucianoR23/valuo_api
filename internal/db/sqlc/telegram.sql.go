@@ -359,6 +359,24 @@ func (q *Queries) TakeTelegramLinkCode(ctx context.Context, arg TakeTelegramLink
 	return user_id, err
 }
 
+const telegramAISuspended = `-- name: TelegramAISuspended :one
+SELECT COALESCE(ai_suspended_until > $2::timestamptz, false)::bool
+FROM users WHERE id = $1
+`
+
+type TelegramAISuspendedParams struct {
+	ID  uuid.UUID          `json:"id"`
+	Now pgtype.Timestamptz `json:"now"`
+}
+
+// Whether the person's AI is suspended (plan §8.6), to say so in the chat.
+func (q *Queries) TelegramAISuspended(ctx context.Context, arg TelegramAISuspendedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, telegramAISuspended, arg.ID, arg.Now)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const telegramDraftBeingEdited = `-- name: TelegramDraftBeingEdited :one
 SELECT id, user_id, chat_id, message_id, fields, editing_at, saved_at, expense_id, created_at FROM telegram_drafts
 WHERE user_id = $1 AND saved_at IS NULL AND editing_at >= $2::timestamptz

@@ -110,3 +110,8 @@ SELECT title, body, insight_date FROM daily_insights
 WHERE household_id = $1 AND user_id IS NULL AND insight_type = 'weekly_review'
 ORDER BY insight_date DESC
 LIMIT 1;
+
+-- name: TelegramAISuspended :one
+-- Whether the person's AI is suspended (plan §8.6), to say so in the chat.
+SELECT COALESCE(ai_suspended_until > sqlc.arg(now)::timestamptz, false)::bool
+FROM users WHERE id = $1;

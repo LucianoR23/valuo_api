@@ -148,3 +148,29 @@ func TestRecentIDs(t *testing.T) {
 		t.Error("oldest id not forgotten")
 	}
 }
+
+func TestPickFile(t *testing.T) {
+	f, ok := pickFile(&Message{Voice: &Voice{FileID: "v", Duration: 30, FileSize: 100}})
+	if !ok || !f.audio || f.tooBig || f.mimeType != "audio/ogg" || f.id != "v" {
+		t.Errorf("voice %+v", f)
+	}
+	if f, _ := pickFile(&Message{Voice: &Voice{FileID: "v", Duration: 31}}); !f.tooBig || f.tooBigText != textVoiceTooLong {
+		t.Errorf("long voice %+v", f)
+	}
+	if _, ok := pickFile(&Message{Audio: &Voice{FileID: "a", MimeType: "audio/flac"}}); ok {
+		t.Error("flac accepted")
+	}
+	if f, ok := pickFile(&Message{Photo: []PhotoSize{{FileID: "x", Width: 9, Height: 9, FileSize: 6 << 20}}}); !ok || !f.tooBig {
+		t.Errorf("huge photo %+v", f)
+	}
+	f, ok = pickFile(&Message{Document: &Document{FileID: "d", MimeType: "image/png", FileSize: 10}})
+	if !ok || f.audio || f.mimeType != "image/png" || f.tooBig {
+		t.Errorf("png file %+v", f)
+	}
+	if _, ok := pickFile(&Message{Document: &Document{FileID: "d", MimeType: "application/pdf"}}); ok {
+		t.Error("pdf accepted")
+	}
+	if heardLine(draft{}) != "" || heardLine(draft{Heard: "Leí: «x»"}) != "Leí: «x»\n\n" {
+		t.Error("heard line")
+	}
+}

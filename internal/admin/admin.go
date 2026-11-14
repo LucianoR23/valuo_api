@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/LucianoR23/valuo_api/internal/audit"
 	"github.com/LucianoR23/valuo_api/internal/auth"
 	sqlcgen "github.com/LucianoR23/valuo_api/internal/db/sqlc"
 	"github.com/LucianoR23/valuo_api/internal/domain"
@@ -40,6 +41,7 @@ type Handler struct {
 	now    func() time.Time
 	logger *slog.Logger
 	ai     AIStatus
+	audit  *audit.Recorder
 }
 
 // NewHandler: loc cuts weeks and months; now is the clock (nil = time.Now).
@@ -59,6 +61,7 @@ func (h *Handler) Mount(r chi.Router) {
 		r.Get("/admin/users/{id}", h.User)
 		r.Get("/admin/audit", h.Audit)
 		r.Get("/admin/ai", h.AI)
+		r.Post("/admin/ai/users/{id}/resume", h.ResumeAI)
 	})
 }
 

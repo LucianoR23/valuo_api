@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"fmt"
+	"html"
 	"log/slog"
 	"time"
 
@@ -51,6 +52,35 @@ func EmailAlert(pool *pgxpool.Pool, mail Mailer, brand string, logger *slog.Logg
 			}
 			if err := mail.Send(ctx, to, subject, body); err != nil {
 				logger.ErrorContext(ctx, "ai: budget alert email", "err", err)
+			}
+		}()
+	}
+}
+
+// SuspendEmailAlert tells every superadmin that an account's AI was
+// suspended (plan §8.6), with the reason and how to lift it.
+func SuspendEmailAlert(pool *pgxpool.Pool, mail Mailer, brand string, logger *slog.Logger) func(ctx context.Context, email, reason string, until time.Time) {
+	q := sqlcgen.New(pool)
+	return func(ctx context.Context, email, reason string, until time.Time) {
+		if mail == nil || !mail.Configured() {
+			return
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			to, err := q.ListSuperadminEmails(ctx)
+			if err != nil || len(to) == 0 {
+				if err != nil {
+					logger.ErrorContext(ctx, "ai: suspension alert recipients", "err", err)
+				}
+				return
+			}
+			subject := brand + ": IA pausada para una cuenta"
+			body := "<p>La IA quedó pausada 24 horas para <b>" + html.EscapeString(email) + "</b>: " +
+				html.EscapeString(reason) + ".</p><p>Puede seguir cargando a mano. Si fue un error, " +
+				"reactivala desde el panel de administración, sección IA.</p>"
+			if err := mail.Send(ctx, to, subject, body); err != nil {
+				logger.ErrorContext(ctx, "ai: suspension alert email", "err", err)
 			}
 		}()
 	}

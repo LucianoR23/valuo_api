@@ -15,7 +15,13 @@ type Querier interface {
 	AIAdminByTask(ctx context.Context, monthStart pgtype.Timestamptz) ([]AIAdminByTaskRow, error)
 	AIAdminTopUsers(ctx context.Context, monthStart pgtype.Timestamptz) ([]AIAdminTopUsersRow, error)
 	AIAdminTotals(ctx context.Context, arg AIAdminTotalsParams) (AIAdminTotalsRow, error)
+	// What another account spends on a day it uses the AI, over the last days:
+	// each (person, day) with some cost counts once; the person being checked
+	// is left out, so one heavy account does not raise its own bar.
+	AIAverageUserDailyCost(ctx context.Context, arg AIAverageUserDailyCostParams) (int64, error)
 	AICostSince(ctx context.Context, since pgtype.Timestamptz) (int64, error)
+	// ===================== AI suspension (plan §8.6) =====================
+	AIOffTopicSince(ctx context.Context, arg AIOffTopicSinceParams) (int32, error)
 	// What one person spent since a moment: provider calls in the last minute
 	// and since the start of the day, and the day's cost.
 	AIUserUsageSince(ctx context.Context, arg AIUserUsageSinceParams) (AIUserUsageSinceRow, error)
@@ -282,8 +288,10 @@ type Querier interface {
 	// The user a mail is for, with the account email (always an accepted sender).
 	InboundRecipient(ctx context.Context, localHash []byte) (InboundRecipientRow, error)
 	// ===================== AI usage (plan 8.1) =====================
-	// Blocked statuses (disabled, rate_limited, user_budget, global_budget)
-	// never reached a provider: they count for the panel, not for limits.
+	// Blocked statuses (disabled, rate_limited, user_budget, global_budget,
+	// suspended) never reached a provider: they count for the panel, not for
+	// limits. off_topic is a provider call whose answer was not an expense
+	// (plan §8.6): it counts like ok.
 	InsertAIUsage(ctx context.Context, arg InsertAIUsageParams) error
 	// A retry of the same mail (same Message-ID) is ignored: no row comes back.
 	InsertInboundMessage(ctx context.Context, arg InsertInboundMessageParams) (uuid.UUID, error)
@@ -305,6 +313,7 @@ type Querier interface {
 	// /resumen: the last weekly review of the space.
 	LatestWeeklyReview(ctx context.Context, householdID uuid.UUID) (LatestWeeklyReviewRow, error)
 	LinkTelegram(ctx context.Context, arg LinkTelegramParams) error
+	ListAISuspendedUsers(ctx context.Context, now pgtype.Timestamptz) ([]ListAISuspendedUsersRow, error)
 	// Lo usa el worker: plantillas activas cuyo rango cubre `date`. Filtro fino
 	// por frequency/day_of_* se resuelve en Go (mismo patrón que recurring_incomes).
 	ListActiveRecurringExpenses(ctx context.Context, dollar_1 pgtype.Date) ([]RecurringExpense, error)
@@ -469,6 +478,7 @@ type Querier interface {
 	ResolveInboundMessage(ctx context.Context, arg ResolveInboundMessageParams) (int64, error)
 	// Admin-only: limpia deleted_at y deja el hogar accesible de nuevo.
 	RestoreHousehold(ctx context.Context, id uuid.UUID) error
+	ResumeUserAI(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
 	RevokeInvite(ctx context.Context, id uuid.UUID) (HouseholdInvite, error)
 	RevokeOtherUserSessions(ctx context.Context, arg RevokeOtherUserSessionsParams) error
@@ -573,8 +583,12 @@ type Querier interface {
 	// Para gastos NO compartidos (is_shared=false): cuenta el total si el usuario
 	// es created_by, porque no hay filas de shares.
 	SumInstallmentsForUserGoal(ctx context.Context, arg SumInstallmentsForUserGoalParams) (pgtype.Numeric, error)
+	// Only when not already suspended, so the alert goes out once.
+	SuspendUserAI(ctx context.Context, arg SuspendUserAIParams) (string, error)
 	// A code works once, before it expires, for an account that still exists.
 	TakeTelegramLinkCode(ctx context.Context, arg TakeTelegramLinkCodeParams) (uuid.UUID, error)
+	// Whether the person's AI is suspended (plan §8.6), to say so in the chat.
+	TelegramAISuspended(ctx context.Context, arg TelegramAISuspendedParams) (bool, error)
 	TelegramDraftBeingEdited(ctx context.Context, arg TelegramDraftBeingEditedParams) (TelegramDraft, error)
 	// The person's active methods, most used in the last 90 days first.
 	TelegramMethods(ctx context.Context, arg TelegramMethodsParams) ([]TelegramMethodsRow, error)

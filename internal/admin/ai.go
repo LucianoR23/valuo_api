@@ -1,13 +1,19 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/LucianoR23/valuo_api/internal/ai"
+	"github.com/LucianoR23/valuo_api/internal/audit"
+	"github.com/LucianoR23/valuo_api/internal/auth"
 	sqlcgen "github.com/LucianoR23/valuo_api/internal/db/sqlc"
+	"github.com/LucianoR23/valuo_api/internal/domain"
 	"github.com/LucianoR23/valuo_api/internal/httpx"
 )
 
@@ -23,6 +29,12 @@ func (h *Handler) WithAI(s AIStatus) *Handler {
 	return h
 }
 
+// WithAudit records superadmin actions (lifting an AI suspension).
+func (h *Handler) WithAudit(r *audit.Recorder) *Handler {
+	h.audit = r
+	return h
+}
+
 // Amounts are millionths of a dollar, as stored in ai_usage.
 type aiTaskDTO struct {
 	Task    string `json:"task"`
@@ -33,11 +45,19 @@ type aiTaskDTO struct {
 }
 
 type aiUserDTO struct {
-	UserID  uuid.UUID `json:"userId"`
-	Email   string    `json:"email"`
-	Calls   int32     `json:"calls"`
-	Blocked int32     `json:"blocked"`
-	Cost    int64     `json:"costMicroUsd"`
+	UserID   uuid.UUID `json:"userId"`
+	Email    string    `json:"email"`
+	Calls    int32     `json:"calls"`
+	Blocked  int32     `json:"blocked"`
+	OffTopic int32     `json:"offTopic"`
+	Cost     int64     `json:"costMicroUsd"`
+}
+
+// aiSuspendedDTO: an account whose AI is off until Until (plan §8.6).
+type aiSuspendedDTO struct {
+	UserID uuid.UUID `json:"userId"`
+	Email  string    `json:"email"`
+	Until  time.Time `json:"until"`
 }
 
 type aiDTO struct {
@@ -59,8 +79,9 @@ type aiDTO struct {
 		Cost  int64 `json:"costMicroUsd"`
 		Calls int32 `json:"calls"`
 	} `json:"month"`
-	ByTask   []aiTaskDTO `json:"byTask"`
-	TopUsers []aiUserDTO `json:"topUsers"`
+	ByTask    []aiTaskDTO      `json:"byTask"`
+	TopUsers  []aiUserDTO      `json:"topUsers"`
+	Suspended []aiSuspendedDTO `json:"suspended"`
 }
 
 // AI: today's and this month's AI spend, by task and by person.
@@ -79,6 +100,11 @@ func (h *Handler) AI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	users, err := h.q.AIAdminTopUsers(r.Context(), ts(monthStart))
+	if err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	suspended, err := h.q.ListAISuspendedUsers(r.Context(), ts(h.now()))
 	if err != nil {
 		httpx.WriteError(w, r, h.logger, err)
 		return
@@ -102,7 +128,31 @@ func (h *Handler) AI(w http.ResponseWriter, r *http.Request) {
 		if u.UserID == nil {
 			continue
 		}
-		out.TopUsers = append(out.TopUsers, aiUserDTO{UserID: *u.UserID, Email: u.Email, Calls: u.Calls, Blocked: u.Blocked, Cost: u.Cost})
+		out.TopUsers = append(out.TopUsers, aiUserDTO{UserID: *u.UserID, Email: u.Email, Calls: u.Calls, Blocked: u.Blocked,
+			OffTopic: u.OffTopic, Cost: u.Cost})
+	}
+	out.Suspended = make([]aiSuspendedDTO, len(suspended))
+	for i, s := range suspended {
+		out.Suspended[i] = aiSuspendedDTO{UserID: s.ID, Email: s.Email, Until: s.AiSuspendedUntil.Time.UTC()}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// ResumeAI lifts an automatic AI suspension (plan §8.6) and audits it.
+func (h *Handler) ResumeAI(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, h.logger, domain.ErrNotFound)
+		return
+	}
+	if _, err := h.q.ResumeUserAI(r.Context(), id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = domain.ErrNotFound
+		}
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	actor, _ := auth.UserIDFrom(r.Context())
+	h.audit.Record(r.Context(), r, audit.Event{UserID: &id, ActorID: &actor, Action: audit.AdminAIResumed, Target: "user:" + id.String()})
+	w.WriteHeader(http.StatusNoContent)
 }

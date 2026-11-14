@@ -202,6 +202,11 @@ func (a *answer) Validate() error {
 	return nil
 }
 
+// OffTopic: the sentence was not an expense (plan §8.6 counts these).
+func (a answer) OffTopic() bool { return a.Intent == intentNotFinance }
+
+var _ ai.OffTopic = answer{}
+
 var schema = mustJSON(map[string]any{
 	"type": "object",
 	"properties": map[string]any{

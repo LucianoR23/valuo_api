@@ -1,8 +1,10 @@
 # Telegram bot (plan 3.6)
 
 People link their Telegram chat from the app (Ajustes › Telegram) and then send
-expenses to the bot as text. Each expense is shown back with ✅ ✏️ ❌ and saved
-only on ✅. Commands: `/resumen`, `/comprometido`, `/deshacer`, `/ayuda`.
+expenses to the bot as text, voice notes (up to 30 s) or photos of tickets and
+payment screenshots (up to 5 MB). Each expense is shown back with ✅ ✏️ ❌ and
+saved only on ✅; for a voice note or photo the card also says what was heard
+or read. Commands: `/resumen`, `/comprometido`, `/deshacer`, `/ayuda`.
 
 - Only linked private chats are served. Any other chat gets one fixed reply
   (at most every 10 minutes) and never reaches the AI (plan §8.1).
@@ -10,6 +12,14 @@ only on ✅. Commands: `/resumen`, `/comprometido`, `/deshacer`, `/ayuda`.
 - Each chat may send 20 updates a minute; more are dropped.
 - AI calls go through the same parser as the app and are recorded in `ai_usage`
   with channel `telegram`, under the same limits.
+- Automatic AI suspension (plan §8.6): 5 answers in a day that are not
+  expenses, or a day's AI cost over 10 times what the other accounts spend on
+  an average day (and over US$ 0.01), turn the AI off for that account for
+  24 h. Superadmins get an email; `/admin/ia` lists suspended accounts and
+  lifts it (`POST /admin/ai/users/{id}/resume`, audited). Typed amounts keep
+  working through the rules.
+- Voice notes and photos are downloaded into memory for the call and never
+  stored (plan §8b).
 - Nothing from the messages is stored except the draft being confirmed
   (`telegram_drafts`, deleted after 24 h by the hourly `telegram_cleanup` job).
 

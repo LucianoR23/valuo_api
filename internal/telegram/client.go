@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -178,13 +179,20 @@ func (c *Client) GetFile(ctx context.Context, fileID string) (string, error) {
 	return f.FilePath, nil
 }
 
-// Download reads a file from GetFile, up to max bytes.
+// filePathRE is what getFile returns ("voice/file_3.oga", "photos/file_7.jpg").
+var filePathRE = regexp.MustCompile(`^[A-Za-z0-9_-]+(/[A-Za-z0-9_.-]+)*$`)
+
+// Download reads a file from GetFile, up to max bytes. The path must look
+// like one Telegram gives, so it cannot leave the bot's file folder.
 func (c *Client) Download(ctx context.Context, path string, max int64) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/file/bot"+c.token+"/"+path, nil)
+	if !filePathRE.MatchString(path) || strings.Contains(path, "..") {
+		return nil, errors.New("telegram download: unexpected file path")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/file/bot"+c.token+"/"+path, nil) //nolint:gosec // G704: fixed host; path checked above
 	if err != nil {
 		return nil, errors.New("telegram download: build request")
 	}
-	res, err := c.http.Do(req)
+	res, err := c.http.Do(req) //nolint:gosec // G704: fixed host; path checked above
 	if err != nil {
 		return nil, errors.New("telegram download: request failed")
 	}

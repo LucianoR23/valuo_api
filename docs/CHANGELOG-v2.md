@@ -4,6 +4,12 @@ Entries reference item IDs from `AHORRA_V2_PLAN.md` (workspace repo).
 
 ## Unreleased
 
+### 3.6 (API part 2): voice notes, photos and automatic AI suspension
+- The bot reads voice notes and audio up to 30 seconds (`ParseAudio`, Ogg/Opus from Telegram) and photos (the largest size under 5 MB) or images sent as files (`ParseReceipt`), downloaded into memory only. The card starts with what was heard or read ("Escuché: «…»", "Leí: «…»"); ✏️ and the buttons work as for text. Other files get a fixed reply. Help text updated.
+- Automatic AI suspension (plan §8.6, defaults decided with the user): parse answers that say "not an expense" are recorded as `off_topic` when a person wrote them (app, Telegram, WhatsApp; never mail). 5 in a day, or a day's AI cost over 10 times the average day of the other accounts in the last 7 days and over US$ 0.01, set `users.ai_suspended_until` to 24 h later. A suspended account's calls are refused and recorded as `suspended` without reaching a provider; typed amounts still work through the rules, and the bot says the reading is paused. Superadmins get one email per suspension.
+- `/admin/ai` adds `suspended` (accounts and until when) and `offTopic` per top user; `POST /admin/ai/users/{id}/resume` lifts a suspension, audited as `admin.ai_resumed`. `off_topic` counts as a call and `suspended` as blocked in limits and the panel.
+- Known: category suggestions made for the bot are recorded with channel `app` (the categorizer has no channel yet).
+
 ### 3.6 (API part 1): Telegram bot, text expenses
 - Migration 000049 (schema approved by the user): `telegram_links` (one chat per user and one user per chat), `telegram_link_codes` (SHA-256 of one-time codes, 10 minutes), `telegram_drafts` (the expense waiting for ✅; `editing_at` after ✏️, `saved_at` and `expense_id` for `/deshacer`) `users.ai_suspended_until` and two new `ai_usage` statuses, `off_topic` and `suspended` (mapped back to `ok` and `disabled` on the way down), used by part 2.
 - New `internal/telegram`: a small stdlib Bot API client (no new dependency, as with the AI providers), `POST /telegram/webhook` checked with `X-Telegram-Bot-Api-Secret-Token` (401 otherwise, 200 for every update it accepts so Telegram does not resend), and for the app `POST /telegram/link` (verified email; returns the `t.me/<bot>?start=<code>` link), `GET /telegram/link` and `DELETE /telegram/link` (tells the chat).

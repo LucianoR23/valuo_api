@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -40,8 +41,10 @@ type Config struct {
 	Now           func() time.Time
 	// Alert is told when the day's spend crosses 50, 80 and 100 percent of
 	// the global budget. Optional.
-	Alert  func(ctx context.Context, percent int, spent, budget int64)
-	Logger *slog.Logger
+	Alert func(ctx context.Context, percent int, spent, budget int64)
+	// SuspendAlert is told when an account's AI is suspended (§8.6). Optional.
+	SuspendAlert func(ctx context.Context, email, reason string, until time.Time)
+	Logger       *slog.Logger
 }
 
 // Service runs AI tasks behind the guardrails.
@@ -56,6 +59,7 @@ type Service struct {
 	loc       *time.Location
 	now       func() time.Time
 	alert     func(ctx context.Context, percent int, spent, budget int64)
+	suspended func(ctx context.Context, email, reason string, until time.Time)
 	logger    *slog.Logger
 }
 
@@ -98,7 +102,7 @@ func New(pool *pgxpool.Pool, cfg Config) (*Service, error) {
 	return &Service{
 		q: sqlcgen.New(pool), enabled: cfg.Enabled, disabled: disabled,
 		routes: routes, prices: prices, providers: providers, limits: cfg.Limits,
-		loc: cfg.Location, now: cfg.Now, alert: cfg.Alert, logger: cfg.Logger,
+		loc: cfg.Location, now: cfg.Now, alert: cfg.Alert, suspended: cfg.SuspendAlert, logger: cfg.Logger,
 	}, nil
 }
 
@@ -175,6 +179,10 @@ func (s *Service) Run(ctx context.Context, req Request, out any) error {
 	}
 
 	now := s.now()
+	if u.AiSuspendedUntil.Valid && u.AiSuspendedUntil.Time.After(now) {
+		s.record(ctx, req, Route{}, "suspended", Output{}, 0, 0)
+		return ErrSuspended
+	}
 	y, m, d := now.In(s.loc).Date()
 	dayStart := time.Date(y, m, d, 0, 0, 0, 0, s.loc)
 	uid := req.UserID
@@ -247,9 +255,12 @@ func (s *Service) Run(ctx context.Context, req Request, out any) error {
 		status := "ok"
 		if bad {
 			status = "invalid_output"
+		} else if ot, ok := val.Interface().(OffTopic); ok && ot.OffTopic() && personal(req.Channel) {
+			status = "off_topic"
 		}
 		s.record(ctx, req, route, status, o, cost, latency)
 		s.checkBudget(ctx, dayStart, cost)
+		s.checkSuspension(ctx, req.UserID, status == "off_topic", cost, dayStart, now)
 		if !bad {
 			reflect.ValueOf(out).Elem().Set(val.Elem())
 			return nil
@@ -258,6 +269,64 @@ func (s *Service) Run(ctx context.Context, req Request, out any) error {
 		if attempt >= attempts || ctx.Err() != nil {
 			return ErrInvalidOutput
 		}
+	}
+}
+
+// personal: channels where a person wrote the input (not mail or the system).
+func personal(c Channel) bool {
+	return c == ChannelApp || c == ChannelTelegram || c == ChannelWhatsApp
+}
+
+// checkSuspension applies §8.6 after a call: too many off-topic answers
+// today, or a day's cost far above an average account's.
+func (s *Service) checkSuspension(ctx context.Context, userID uuid.UUID, offTopic bool, cost int64, dayStart, now time.Time) {
+	bg := context.WithoutCancel(ctx)
+	if offTopic {
+		n, err := s.q.AIOffTopicSince(bg, sqlcgen.AIOffTopicSinceParams{UserID: &userID, Since: ts(dayStart)})
+		if err != nil {
+			s.logger.ErrorContext(ctx, "ai: off-topic count", "err", err)
+		} else if int(n) >= SuspendOffTopic {
+			s.suspend(ctx, userID, fmt.Sprintf("%d mensajes que no eran gastos hoy", n), now)
+			return
+		}
+	}
+	if cost == 0 {
+		return
+	}
+	uid := userID
+	use, err := s.q.AIUserUsageSince(bg, sqlcgen.AIUserUsageSinceParams{MinuteStart: ts(now), UserID: &uid, DayStart: ts(dayStart)})
+	if err != nil || use.CostDay <= SuspendMinCost {
+		if err != nil {
+			s.logger.ErrorContext(ctx, "ai: user cost", "err", err)
+		}
+		return
+	}
+	avg, err := s.q.AIAverageUserDailyCost(bg, sqlcgen.AIAverageUserDailyCostParams{
+		Since: ts(dayStart.AddDate(0, 0, -SuspendAverageDays)), Exclude: userID, Tz: s.loc.String(),
+	})
+	if err != nil {
+		s.logger.ErrorContext(ctx, "ai: average cost", "err", err)
+		return
+	}
+	if avg > 0 && use.CostDay > SuspendCostFactor*avg {
+		s.suspend(ctx, userID, fmt.Sprintf("gasto de IA de hoy US$ %s, más de %d veces el promedio (US$ %s)",
+			usd(use.CostDay), SuspendCostFactor, usd(avg)), now)
+	}
+}
+
+func (s *Service) suspend(ctx context.Context, userID uuid.UUID, reason string, now time.Time) {
+	until := now.Add(SuspendFor)
+	email, err := s.q.SuspendUserAI(context.WithoutCancel(ctx), sqlcgen.SuspendUserAIParams{ID: userID, Until: ts(until), Now: ts(now)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return // already suspended
+	}
+	if err != nil {
+		s.logger.ErrorContext(ctx, "ai: suspend", "err", err)
+		return
+	}
+	s.logger.WarnContext(ctx, "ai: suspended for an account", "userId", userID.String(), "reason", reason, "until", until)
+	if s.suspended != nil {
+		s.suspended(ctx, email, reason, until)
 	}
 }
 
