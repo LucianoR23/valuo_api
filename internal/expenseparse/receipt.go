@@ -87,7 +87,12 @@ func (r *receiptAnswer) answer() answer {
 	}
 }
 
-var _ ai.Validator = (*receiptAnswer)(nil)
+func (r receiptAnswer) OffTopic() bool { return r.Intent == intentNotFinance }
+
+var (
+	_ ai.Validator = (*receiptAnswer)(nil)
+	_ ai.OffTopic  = receiptAnswer{}
+)
 
 // ParseReceipt reads an image for userID. When the AI is off, over a limit
 // or fails, the result is empty and the app asks the person to type it.

@@ -69,6 +69,11 @@ func TestClientCalls(t *testing.T) {
 	if _, err := c.Download(ctx, path, 9); err == nil {
 		t.Error("too big file accepted")
 	}
+	for _, bad := range []string{"../bot1/getMe", "/etc/passwd", "voice/../../x", "https://evil.test/x", ""} {
+		if _, err := c.Download(ctx, bad, 10); err == nil {
+			t.Errorf("path %q accepted", bad)
+		}
+	}
 	if err := c.Setup(ctx, "https://api.test/telegram/webhook", "s3cret", Commands); err != nil {
 		t.Fatal(err)
 	}

@@ -51,11 +51,16 @@ type Bot interface {
 	SendMessage(ctx context.Context, chatID int64, text string, kb Keyboard) (int64, error)
 	EditMessage(ctx context.Context, chatID, messageID int64, text string, kb Keyboard) error
 	AnswerCallback(ctx context.Context, id, text string) error
+	GetFile(ctx context.Context, fileID string) (string, error)
+	Download(ctx context.Context, path string, max int64) ([]byte, error)
 }
 
-// Parser reads a sentence (expenseparse.Parser via the Telegram channel).
+// Parser reads a sentence, a voice note or an image (expenseparse.Parser via
+// the Telegram channel).
 type Parser interface {
 	Parse(ctx context.Context, userID, householdID uuid.UUID, text string) (expenseparse.Result, error)
+	ParseAudio(ctx context.Context, userID, householdID uuid.UUID, mimeType string, data []byte) (expenseparse.Result, error)
+	ParseReceipt(ctx context.Context, userID, householdID uuid.UUID, mimeType string, data []byte) (expenseparse.Result, error)
 }
 
 // Spaces finds the person's "Mi plata" and Hogar.
@@ -253,7 +258,7 @@ func (s *Service) message(ctx context.Context, m *Message) {
 	case text != "":
 		s.expense(ctx, chatID, userID, text)
 	case m.Voice != nil || m.Audio != nil || len(m.Photo) > 0 || m.Document != nil:
-		s.send(ctx, chatID, textOnlyText, nil)
+		s.media(ctx, chatID, userID, m)
 	}
 }
 
@@ -329,10 +334,87 @@ type draft struct {
 	MethodID     *uuid.UUID `json:"methodId,omitempty"`
 	Method       string     `json:"method,omitempty"`
 	Options      []option   `json:"options,omitempty"`
+	// Heard is what a voice note said or an image showed (shown above).
+	Heard string `json:"heard,omitempty"`
 }
 
 func (s *Service) expense(ctx context.Context, chatID int64, userID uuid.UUID, text string) {
-	// A message after ✏️ replaces that draft.
+	personal, ok := s.begin(ctx, chatID, userID)
+	if !ok {
+		return
+	}
+	res, err := s.Parser.Parse(ctx, userID, personal.ID, text)
+	if err != nil {
+		s.fail(ctx, chatID, "parse", err)
+		return
+	}
+	if !res.NotFinance && (!res.Understood || res.Amount <= 0) {
+		if s.suspended(ctx, userID) {
+			s.send(ctx, chatID, textAIPaused, nil)
+		} else {
+			s.send(ctx, chatID, textNoAmount, nil)
+		}
+		return
+	}
+	s.offer(ctx, chatID, userID, personal, res, "")
+}
+
+// media reads a voice note or a photo (plan 3.6, part 2) with the app's
+// readers: up to 30 seconds of audio, images up to 5 MB.
+func (s *Service) media(ctx context.Context, chatID int64, userID uuid.UUID, m *Message) {
+	f, ok := pickFile(m)
+	if !ok {
+		s.send(ctx, chatID, textOnlyText, nil)
+		return
+	}
+	if f.tooBig {
+		s.send(ctx, chatID, f.tooBigText, nil)
+		return
+	}
+	if s.suspended(ctx, userID) {
+		s.send(ctx, chatID, textAIPaused, nil)
+		return
+	}
+	personal, ok := s.begin(ctx, chatID, userID)
+	if !ok {
+		return
+	}
+	data, err := s.download(ctx, f)
+	if err != nil {
+		s.cfg.Logger.WarnContext(ctx, "telegram: download failed", "error", err)
+		s.send(ctx, chatID, textCantRead, nil)
+		return
+	}
+	var res expenseparse.Result
+	if f.audio {
+		res, err = s.Parser.ParseAudio(ctx, userID, personal.ID, f.mimeType, data)
+	} else {
+		res, err = s.Parser.ParseReceipt(ctx, userID, personal.ID, f.mimeType, data)
+	}
+	switch {
+	case errors.Is(err, expenseparse.ErrAudioType) || errors.Is(err, expenseparse.ErrImageType):
+		s.send(ctx, chatID, textOnlyText, nil)
+		return
+	case err != nil:
+		s.fail(ctx, chatID, "parse media", err)
+		return
+	case !res.NotFinance && (!res.Understood || res.Amount <= 0):
+		s.send(ctx, chatID, textCantRead, nil)
+		return
+	}
+	heard := ""
+	if res.Transcript != "" {
+		if f.audio {
+			heard = "Escuché: «" + res.Transcript + "»"
+		} else {
+			heard = "Leí: «" + res.Transcript + "»"
+		}
+	}
+	s.offer(ctx, chatID, userID, personal, res, heard)
+}
+
+// begin replaces a draft waiting for a correction (✏️) and finds "Mi plata".
+func (s *Service) begin(ctx context.Context, chatID int64, userID uuid.UUID) (domain.Household, bool) {
 	if old, err := s.Queries.TelegramDraftBeingEdited(ctx, sqlcgen.TelegramDraftBeingEditedParams{
 		UserID: userID, Since: ts(s.now().Add(-EditWindow)),
 	}); err == nil {
@@ -341,28 +423,32 @@ func (s *Service) expense(ctx context.Context, chatID int64, userID uuid.UUID, t
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		s.fail(ctx, chatID, "draft being edited", err)
-		return
+		return domain.Household{}, false
 	}
-
 	personal, err := s.Spaces.PersonalForUser(ctx, userID)
 	if err != nil {
 		s.fail(ctx, chatID, "personal space", err)
-		return
+		return domain.Household{}, false
 	}
-	res, err := s.Parser.Parse(ctx, userID, personal.ID, text)
-	if err != nil {
-		s.fail(ctx, chatID, "parse", err)
-		return
+	return personal, true
+}
+
+// suspended says whether the person's AI is off (plan §8.6).
+func (s *Service) suspended(ctx context.Context, userID uuid.UUID) bool {
+	off, err := s.Queries.TelegramAISuspended(ctx, sqlcgen.TelegramAISuspendedParams{ID: userID, Now: ts(s.now())})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		s.cfg.Logger.WarnContext(ctx, "telegram: suspension lookup failed", "error", err)
 	}
-	switch {
-	case res.NotFinance:
+	return off
+}
+
+// offer saves the draft and sends it with its buttons. heard is what a
+// voice note said or an image showed, shown above the expense.
+func (s *Service) offer(ctx context.Context, chatID int64, userID uuid.UUID, personal domain.Household, res expenseparse.Result, heard string) {
+	if res.NotFinance {
 		s.send(ctx, chatID, textNotFinance, nil)
 		return
-	case !res.Understood || res.Amount <= 0:
-		s.send(ctx, chatID, textNoAmount, nil)
-		return
 	}
-
 	d, err := s.newDraft(ctx, userID, personal, res)
 	if err != nil {
 		s.fail(ctx, chatID, "build draft", err)
@@ -372,6 +458,7 @@ func (s *Service) expense(ctx context.Context, chatID int64, userID uuid.UUID, t
 		s.send(ctx, chatID, textNoMethods, nil)
 		return
 	}
+	d.Heard = heard
 	fields, _ := json.Marshal(d)
 	row, err := s.Queries.CreateTelegramDraft(ctx, sqlcgen.CreateTelegramDraftParams{UserID: userID, ChatID: chatID, Fields: fields})
 	if err != nil {
@@ -500,9 +587,9 @@ func (s *Service) card(id uuid.UUID, d draft) (string, Keyboard) {
 			kb = append(kb, row)
 		}
 		kb = append(kb, []InlineButton{{Text: "✏️ Corregir", CallbackData: "ed:" + sid}, {Text: "❌ Cancelar", CallbackData: "no:" + sid}})
-		return s.summary1(d) + "\n\n¿Con qué pagaste?", kb
+		return heardLine(d) + s.summary1(d) + "\n\n¿Con qué pagaste?", kb
 	}
-	return s.summary1(d) + "\n\n¿Lo guardo?", Keyboard{{
+	return heardLine(d) + s.summary1(d) + "\n\n¿Lo guardo?", Keyboard{{
 		{Text: "✅ Guardar", CallbackData: "ok:" + sid},
 		{Text: "✏️ Corregir", CallbackData: "ed:" + sid},
 		{Text: "❌ Cancelar", CallbackData: "no:" + sid},

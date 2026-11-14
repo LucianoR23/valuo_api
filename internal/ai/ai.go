@@ -80,6 +80,28 @@ type Validator interface {
 	Validate() error
 }
 
+// OffTopic is implemented by answers that can say the input was not an
+// expense. Such answers are recorded as off_topic when a person sent the
+// input (app, telegram, whatsapp), and count toward the suspension (§8.6).
+type OffTopic interface {
+	OffTopic() bool
+}
+
+// Automatic suspension (plan §8.6, defaults decided with the user on
+// 2026-11-14): the AI is off for an account for SuspendFor after
+// SuspendOffTopic off-topic answers in a day, or when its day's AI cost goes
+// over SuspendCostFactor times what the other accounts spend on an average
+// day (last SuspendAverageDays) and over SuspendMinCost. With no other
+// account using the AI there is no average and the cost rule waits. Manual entry keeps
+// working; a superadmin can lift it from /admin/ia.
+const (
+	SuspendOffTopic    = 5
+	SuspendFor         = 24 * time.Hour
+	SuspendCostFactor  = 10
+	SuspendAverageDays = 7
+	SuspendMinCost     = 10_000 // US$ 0.01 in millionths
+)
+
 // Errors returned by Run. Features turn them into a friendly message and
 // fall back to manual entry.
 var (
@@ -88,6 +110,7 @@ var (
 	ErrRateLimited   = errors.New("ai: too many requests")
 	ErrUserBudget    = errors.New("ai: personal daily limit reached")
 	ErrGlobalBudget  = errors.New("ai: daily budget reached")
+	ErrSuspended     = errors.New("ai: suspended for this account")
 	ErrInvalidOutput = errors.New("ai: invalid answer")
 	ErrProvider      = errors.New("ai: provider failed")
 	ErrBadRequest    = errors.New("ai: bad request")

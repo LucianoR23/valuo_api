@@ -43,6 +43,7 @@ const (
 	AdminPurge          = "admin.household_purged"
 	AdminWaitlistExport = "admin.waitlist_exported"
 	AdminWaitlistDelete = "admin.waitlist_deleted"
+	AdminAIResumed      = "admin.ai_resumed"
 )
 
 // Event: one thing that happened. UserID is the account it happened to

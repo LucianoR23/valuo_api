@@ -490,10 +490,11 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, logger *sl
 			ai.NewAnthropic(cfg.AnthropicAPIKey, cfg.AnthropicBaseURL, nil),
 			ai.NewGemini(cfg.GeminiAPIKey, cfg.GeminiBaseURL, nil),
 		},
-		Location: dates.Location(),
-		Now:      opts.Now,
-		Alert:    ai.EmailAlert(pool, reportsSender, cfg.BrandName, logger),
-		Logger:   logger,
+		Location:     dates.Location(),
+		Now:          opts.Now,
+		Alert:        ai.EmailAlert(pool, reportsSender, cfg.BrandName, logger),
+		SuspendAlert: ai.SuspendEmailAlert(pool, reportsSender, cfg.BrandName, logger),
+		Logger:       logger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("app: %w", err)
@@ -686,7 +687,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, logger *sl
 		// Endpoints: listar soft-deleted, restaurar, purgar (DELETE físico con CASCADE).
 		householdsAdminHandler.Mount(r)
 		// Superadmin panel (plan 1.11): counts, accounts, audit of every account.
-		admin.NewHandler(pool, authMW, dates.Location(), opts.Now, logger).WithAI(aiSvc).Mount(r)
+		admin.NewHandler(pool, authMW, dates.Location(), opts.Now, logger).WithAI(aiSvc).WithAudit(auditRec).Mount(r)
 
 		// Household invites: /invites/{token} es pública (preview pre-login).
 		// Create/List/Revoke/Accept aplican auth dentro del mount.

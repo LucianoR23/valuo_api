@@ -39,7 +39,20 @@ type fakeBot struct {
 	next  int64
 }
 
+// files are what the fake serves for download, by file_id.
+var files = map[string][]byte{
+	"voice-1": []byte("OggS voice note"),
+	"big":     append([]byte{0xFF, 0xD8, 0xFF, 0xE0}, []byte("jpeg ticket")...),
+}
+
 func (f *fakeBot) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if data, ok := strings.CutPrefix(r.URL.Path, "/file/bot"+token+"/f/"); ok {
+		f.mu.Lock()
+		f.calls = append(f.calls, call{Method: "download", Params: map[string]any{"path": data}})
+		f.mu.Unlock()
+		_, _ = w.Write(files[data])
+		return
+	}
 	prefix := "/bot" + token + "/"
 	if !strings.HasPrefix(r.URL.Path, prefix) {
 		http.NotFound(w, r)
@@ -54,8 +67,11 @@ func (f *fakeBot) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := f.next
 	f.mu.Unlock()
 	var result any = true
-	if method == "sendMessage" {
+	switch method {
+	case "sendMessage":
 		result = map[string]int64{"message_id": id}
+	case "getFile":
+		result = map[string]string{"file_path": "f/" + p["file_id"].(string)}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": result})
@@ -136,6 +152,14 @@ func (b *bot) say(msg string) []call {
 		"message_id": 1, "from": map[string]any{"id": b.chat},
 		"chat": map[string]any{"id": b.chat, "type": "private"}, "text": msg,
 	}}, http.StatusOK)
+}
+
+func (b *bot) send(msg map[string]any) []call {
+	b.t.Helper()
+	msg["message_id"] = 1
+	msg["from"] = map[string]any{"id": b.chat}
+	msg["chat"] = map[string]any{"id": b.chat, "type": "private"}
+	return b.post(map[string]any{"message": msg}, http.StatusOK)
 }
 
 func (b *bot) tap(data string, msgID float64) []call {

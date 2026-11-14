@@ -14,9 +14,9 @@ import (
 
 const aIAdminByTask = `-- name: AIAdminByTask :many
 SELECT task,
-       COUNT(*) FILTER (WHERE status IN ('ok', 'invalid_output', 'provider_error', 'timeout'))::int AS calls,
+       COUNT(*) FILTER (WHERE status IN ('ok', 'off_topic', 'invalid_output', 'provider_error', 'timeout'))::int AS calls,
        COUNT(*) FILTER (WHERE status IN ('invalid_output', 'provider_error', 'timeout'))::int AS errors,
-       COUNT(*) FILTER (WHERE status IN ('disabled', 'rate_limited', 'user_budget', 'global_budget'))::int AS blocked,
+       COUNT(*) FILTER (WHERE status IN ('disabled', 'rate_limited', 'user_budget', 'global_budget', 'suspended'))::int AS blocked,
        COALESCE(SUM(cost_micro_usd), 0)::bigint AS cost
 FROM ai_usage
 WHERE created_at >= $1::timestamptz
@@ -60,8 +60,9 @@ func (q *Queries) AIAdminByTask(ctx context.Context, monthStart pgtype.Timestamp
 
 const aIAdminTopUsers = `-- name: AIAdminTopUsers :many
 SELECT a.user_id, u.email,
-       COUNT(*) FILTER (WHERE a.status IN ('ok', 'invalid_output', 'provider_error', 'timeout'))::int AS calls,
-       COUNT(*) FILTER (WHERE a.status IN ('disabled', 'rate_limited', 'user_budget', 'global_budget'))::int AS blocked,
+       COUNT(*) FILTER (WHERE a.status IN ('ok', 'off_topic', 'invalid_output', 'provider_error', 'timeout'))::int AS calls,
+       COUNT(*) FILTER (WHERE a.status IN ('disabled', 'rate_limited', 'user_budget', 'global_budget', 'suspended'))::int AS blocked,
+       COUNT(*) FILTER (WHERE a.status = 'off_topic')::int AS off_topic,
        COALESCE(SUM(a.cost_micro_usd), 0)::bigint AS cost
 FROM ai_usage a
 JOIN users u ON u.id = a.user_id
@@ -72,11 +73,12 @@ LIMIT 20
 `
 
 type AIAdminTopUsersRow struct {
-	UserID  *uuid.UUID `json:"user_id"`
-	Email   string     `json:"email"`
-	Calls   int32      `json:"calls"`
-	Blocked int32      `json:"blocked"`
-	Cost    int64      `json:"cost"`
+	UserID   *uuid.UUID `json:"user_id"`
+	Email    string     `json:"email"`
+	Calls    int32      `json:"calls"`
+	Blocked  int32      `json:"blocked"`
+	OffTopic int32      `json:"off_topic"`
+	Cost     int64      `json:"cost"`
 }
 
 func (q *Queries) AIAdminTopUsers(ctx context.Context, monthStart pgtype.Timestamptz) ([]AIAdminTopUsersRow, error) {
@@ -93,6 +95,7 @@ func (q *Queries) AIAdminTopUsers(ctx context.Context, monthStart pgtype.Timesta
 			&i.Email,
 			&i.Calls,
 			&i.Blocked,
+			&i.OffTopic,
 			&i.Cost,
 		); err != nil {
 			return nil, err
@@ -109,12 +112,12 @@ const aIAdminTotals = `-- name: AIAdminTotals :one
 SELECT COALESCE(SUM(cost_micro_usd) FILTER (WHERE created_at >= $1::timestamptz), 0)::bigint AS cost_day,
        COALESCE(SUM(cost_micro_usd), 0)::bigint AS cost_month,
        COUNT(*) FILTER (WHERE created_at >= $1::timestamptz
-                          AND status IN ('ok', 'invalid_output', 'provider_error', 'timeout'))::int AS calls_day,
-       COUNT(*) FILTER (WHERE status IN ('ok', 'invalid_output', 'provider_error', 'timeout'))::int AS calls_month,
+                          AND status IN ('ok', 'off_topic', 'invalid_output', 'provider_error', 'timeout'))::int AS calls_day,
+       COUNT(*) FILTER (WHERE status IN ('ok', 'off_topic', 'invalid_output', 'provider_error', 'timeout'))::int AS calls_month,
        COUNT(*) FILTER (WHERE created_at >= $1::timestamptz
                           AND status IN ('invalid_output', 'provider_error', 'timeout'))::int AS errors_day,
        COUNT(*) FILTER (WHERE created_at >= $1::timestamptz
-                          AND status IN ('disabled', 'rate_limited', 'user_budget', 'global_budget'))::int AS blocked_day,
+                          AND status IN ('disabled', 'rate_limited', 'user_budget', 'global_budget', 'suspended'))::int AS blocked_day,
        COALESCE(AVG(latency_ms) FILTER (WHERE created_at >= $1::timestamptz
                                          AND status = 'ok'), 0)::int AS avg_latency_day
 FROM ai_usage
@@ -151,6 +154,32 @@ func (q *Queries) AIAdminTotals(ctx context.Context, arg AIAdminTotalsParams) (A
 	return i, err
 }
 
+const aIAverageUserDailyCost = `-- name: AIAverageUserDailyCost :one
+SELECT COALESCE(AVG(cost), 0)::bigint FROM (
+    SELECT SUM(cost_micro_usd) AS cost
+    FROM ai_usage
+    WHERE created_at >= $1::timestamptz AND user_id IS NOT NULL
+      AND user_id <> $2::uuid AND cost_micro_usd > 0
+    GROUP BY user_id, (created_at AT TIME ZONE $3::text)::date
+) d
+`
+
+type AIAverageUserDailyCostParams struct {
+	Since   pgtype.Timestamptz `json:"since"`
+	Exclude uuid.UUID          `json:"exclude"`
+	Tz      string             `json:"tz"`
+}
+
+// What another account spends on a day it uses the AI, over the last days:
+// each (person, day) with some cost counts once; the person being checked
+// is left out, so one heavy account does not raise its own bar.
+func (q *Queries) AIAverageUserDailyCost(ctx context.Context, arg AIAverageUserDailyCostParams) (int64, error) {
+	row := q.db.QueryRow(ctx, aIAverageUserDailyCost, arg.Since, arg.Exclude, arg.Tz)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const aICostSince = `-- name: AICostSince :one
 SELECT COALESCE(SUM(cost_micro_usd), 0)::bigint
 FROM ai_usage
@@ -164,6 +193,25 @@ func (q *Queries) AICostSince(ctx context.Context, since pgtype.Timestamptz) (in
 	return column_1, err
 }
 
+const aIOffTopicSince = `-- name: AIOffTopicSince :one
+
+SELECT COUNT(*)::int FROM ai_usage
+WHERE user_id = $1 AND status = 'off_topic' AND created_at >= $2::timestamptz
+`
+
+type AIOffTopicSinceParams struct {
+	UserID *uuid.UUID         `json:"user_id"`
+	Since  pgtype.Timestamptz `json:"since"`
+}
+
+// ===================== AI suspension (plan §8.6) =====================
+func (q *Queries) AIOffTopicSince(ctx context.Context, arg AIOffTopicSinceParams) (int32, error) {
+	row := q.db.QueryRow(ctx, aIOffTopicSince, arg.UserID, arg.Since)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const aIUserUsageSince = `-- name: AIUserUsageSince :one
 SELECT COUNT(*) FILTER (WHERE created_at >= $1::timestamptz)::int AS calls_minute,
        COUNT(*)::int AS calls_day,
@@ -171,7 +219,7 @@ SELECT COUNT(*) FILTER (WHERE created_at >= $1::timestamptz)::int AS calls_minut
 FROM ai_usage
 WHERE user_id = $2
   AND created_at >= $3::timestamptz
-  AND status IN ('ok', 'invalid_output', 'provider_error', 'timeout')
+  AND status IN ('ok', 'off_topic', 'invalid_output', 'provider_error', 'timeout')
 `
 
 type AIUserUsageSinceParams struct {
@@ -220,8 +268,10 @@ type InsertAIUsageParams struct {
 }
 
 // ===================== AI usage (plan 8.1) =====================
-// Blocked statuses (disabled, rate_limited, user_budget, global_budget)
-// never reached a provider: they count for the panel, not for limits.
+// Blocked statuses (disabled, rate_limited, user_budget, global_budget,
+// suspended) never reached a provider: they count for the panel, not for
+// limits. off_topic is a provider call whose answer was not an expense
+// (plan §8.6): it counts like ok.
 func (q *Queries) InsertAIUsage(ctx context.Context, arg InsertAIUsageParams) error {
 	_, err := q.db.Exec(ctx, insertAIUsage,
 		arg.UserID,
@@ -239,6 +289,38 @@ func (q *Queries) InsertAIUsage(ctx context.Context, arg InsertAIUsageParams) er
 		arg.LatencyMs,
 	)
 	return err
+}
+
+const listAISuspendedUsers = `-- name: ListAISuspendedUsers :many
+SELECT id, email, ai_suspended_until FROM users
+WHERE ai_suspended_until > $1::timestamptz AND deleted_at IS NULL
+ORDER BY ai_suspended_until DESC
+`
+
+type ListAISuspendedUsersRow struct {
+	ID               uuid.UUID          `json:"id"`
+	Email            string             `json:"email"`
+	AiSuspendedUntil pgtype.Timestamptz `json:"ai_suspended_until"`
+}
+
+func (q *Queries) ListAISuspendedUsers(ctx context.Context, now pgtype.Timestamptz) ([]ListAISuspendedUsersRow, error) {
+	rows, err := q.db.Query(ctx, listAISuspendedUsers, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAISuspendedUsersRow{}
+	for rows.Next() {
+		var i ListAISuspendedUsersRow
+		if err := rows.Scan(&i.ID, &i.Email, &i.AiSuspendedUntil); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listSuperadminEmails = `-- name: ListSuperadminEmails :many
@@ -265,4 +347,36 @@ func (q *Queries) ListSuperadminEmails(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const resumeUserAI = `-- name: ResumeUserAI :one
+UPDATE users SET ai_suspended_until = NULL
+WHERE id = $1 AND ai_suspended_until IS NOT NULL AND deleted_at IS NULL
+RETURNING id
+`
+
+func (q *Queries) ResumeUserAI(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, resumeUserAI, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
+const suspendUserAI = `-- name: SuspendUserAI :one
+UPDATE users SET ai_suspended_until = $2::timestamptz
+WHERE id = $1 AND (ai_suspended_until IS NULL OR ai_suspended_until <= $3::timestamptz)
+RETURNING email
+`
+
+type SuspendUserAIParams struct {
+	ID    uuid.UUID          `json:"id"`
+	Until pgtype.Timestamptz `json:"until"`
+	Now   pgtype.Timestamptz `json:"now"`
+}
+
+// Only when not already suspended, so the alert goes out once.
+func (q *Queries) SuspendUserAI(ctx context.Context, arg SuspendUserAIParams) (string, error) {
+	row := q.db.QueryRow(ctx, suspendUserAI, arg.ID, arg.Until, arg.Now)
+	var email string
+	err := row.Scan(&email)
+	return email, err
 }
