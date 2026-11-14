@@ -157,3 +157,49 @@ func TestLoadVAPIDSubject(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadTelegram(t *testing.T) {
+	good := map[string]string{
+		"BOT_TELEGRAM_ENABLED":    "true",
+		"TELEGRAM_BOT_TOKEN":      "123:abc",
+		"TELEGRAM_WEBHOOK_SECRET": strings.Repeat("s", 32),
+		"TELEGRAM_BOT_USERNAME":   "@valuo_next_bot",
+		"API_PUBLIC_URL":          "https://api-next.example.test",
+	}
+	tests := []struct {
+		name    string
+		change  map[string]string
+		wantErr string
+	}{
+		{"off needs nothing", map[string]string{"BOT_TELEGRAM_ENABLED": "", "TELEGRAM_BOT_TOKEN": ""}, ""},
+		{"on with everything", nil, ""},
+		{"no token", map[string]string{"TELEGRAM_BOT_TOKEN": ""}, "TELEGRAM_BOT_TOKEN"},
+		{"short secret", map[string]string{"TELEGRAM_WEBHOOK_SECRET": "short"}, "TELEGRAM_WEBHOOK_SECRET"},
+		{"secret with spaces", map[string]string{"TELEGRAM_WEBHOOK_SECRET": strings.Repeat("s ", 20)}, "TELEGRAM_WEBHOOK_SECRET"},
+		{"no username", map[string]string{"TELEGRAM_BOT_USERNAME": ""}, "TELEGRAM_BOT_USERNAME"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setRequired(t)
+			for k, v := range good {
+				if c, ok := tt.change[k]; ok {
+					v = c
+				}
+				t.Setenv(k, v)
+			}
+			cfg, err := Load()
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err %v, want %s", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.TelegramEnabled && cfg.TelegramBotUsername != "valuo_next_bot" {
+				t.Errorf("username %q", cfg.TelegramBotUsername)
+			}
+		})
+	}
+}

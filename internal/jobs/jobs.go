@@ -30,6 +30,8 @@ type Units struct {
 	WaitlistCleanup func(ctx context.Context) (deleted int64, err error)
 	// InboundCleanup applies the retention of imported mails (plan 3.5).
 	InboundCleanup func(ctx context.Context) (deleted int64, err error)
+	// TelegramCleanup deletes expired link codes and day-old drafts (plan 3.6).
+	TelegramCleanup func(ctx context.Context) (deleted int64, err error)
 	// DeliverPush sends a push that waited for the end of quiet hours.
 	DeliverPush func(ctx context.Context, userID uuid.UUID, kind string, payload []byte) error
 	// DailyReminders sends the logging nudge of the 15-minute slot that
@@ -138,6 +140,14 @@ type InboundCleanupArgs struct{}
 
 func (InboundCleanupArgs) Kind() string { return "inbound_cleanup" }
 func (InboundCleanupArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{Queue: queueMaintenance, MaxAttempts: 5}
+}
+
+// TelegramCleanupArgs deletes expired bot link codes and drafts (hourly).
+type TelegramCleanupArgs struct{}
+
+func (TelegramCleanupArgs) Kind() string { return "telegram_cleanup" }
+func (TelegramCleanupArgs) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{Queue: queueMaintenance, MaxAttempts: 5}
 }
 

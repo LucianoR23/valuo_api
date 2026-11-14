@@ -63,6 +63,7 @@ import (
 	"github.com/LucianoR23/valuo_api/internal/statements"
 	"github.com/LucianoR23/valuo_api/internal/summaries"
 	"github.com/LucianoR23/valuo_api/internal/support"
+	"github.com/LucianoR23/valuo_api/internal/telegram"
 	"github.com/LucianoR23/valuo_api/internal/users"
 	"github.com/LucianoR23/valuo_api/internal/waitlist"
 )
@@ -129,6 +130,9 @@ type Jobs struct {
 	DeliverPush func(ctx context.Context, userID uuid.UUID, kind string, payload []byte) error
 	// DailyReminders sends the logging nudge of the slot starting at slot.
 	DailyReminders func(ctx context.Context, slot time.Time) (sent int, err error)
+	// TelegramCleanup deletes expired bot link codes and day-old drafts
+	// (nil with the bot off).
+	TelegramCleanup func(ctx context.Context) (deleted int64, err error)
 }
 
 // Jobs returns the background jobs' units of work.
@@ -531,6 +535,25 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, logger *sl
 		inboundSvc = inbound.NewService(sqlcgen.New(pool), keys, parser, cfg.InboundDomain, cfg.InboundLocalPrefix, dates.Location(), parseNow, logger)
 	}
 	inboundHandler := inbound.NewHandler(inboundSvc, authMW, parseNow, logger)
+
+	// Telegram bot (plan 3.6): off unless BOT_TELEGRAM_ENABLED. It reuses the
+	// parser (AI usage recorded as channel telegram), the expenses service
+	// and "Comprometido"; the webhook is registered on start.
+	var telegramSvc *telegram.Service
+	if cfg.TelegramEnabled {
+		tgClient := telegram.NewClient(cfg.TelegramBotToken, cfg.TelegramAPIBaseURL, nil)
+		telegramSvc = telegram.NewService(telegram.Deps{
+			Queries: sqlcgen.New(pool), Bot: tgClient, Parser: parser.Via(ai.ChannelTelegram),
+			Categorizer: suggester, Spaces: householdsRepo, Expenses: expensesSvc, Committer: statementsSvc,
+			CategoryName: insightsRepo.CategoryName,
+		}, telegram.Config{
+			Username: cfg.TelegramBotUsername, Brand: cfg.BrandName,
+			Location: dates.Location(), Now: parseNow, Logger: logger,
+		})
+		a.jobs.TelegramCleanup = telegramSvc.Cleanup
+		a.starters = append(a.starters, telegram.Starter(tgClient, cfg.APIPublicURL+"/telegram/webhook", cfg.TelegramWebhookSecret, logger))
+	}
+	telegramHandler := telegram.NewHandler(telegramSvc, cfg.TelegramWebhookSecret, authMW, logger)
 	reportsMailer.SetIntro(func(ctx context.Context, hhID uuid.UUID, month time.Time) (string, bool) {
 		y, m, _ := month.Date()
 		body, ok, err := insightsRepo.AIBody(ctx, hhID, time.Date(y, m+1, 1, 0, 0, 0, 0, time.UTC), domain.InsightTypeMonthlyReview)
@@ -600,6 +623,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, logger *sl
 		AuditRetention:    func(ctx context.Context) error { return audit.ApplyRetention(ctx, pool, logger) },
 		WaitlistCleanup:   waitlistSvc.Cleanup,
 		InboundCleanup:    inboundCleanup(inboundSvc),
+		TelegramCleanup:   a.jobs.TelegramCleanup,
 		DailyReminders:    a.jobs.DailyReminders,
 	}, logger)
 	if err != nil {
@@ -727,6 +751,8 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, logger *sl
 		notifPrefsHandler.Mount(r)
 		// Signed webhook from the Email Worker plus the app's routes (plan 3.5).
 		inboundHandler.Mount(r)
+		// Telegram's webhook (secret header) plus linking from the app (plan 3.6).
+		telegramHandler.Mount(r)
 	})
 
 	// Waitlist (plan B.5): public, its own CORS and limits.
