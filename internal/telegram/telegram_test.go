@@ -279,6 +279,17 @@ func TestTelegramBot(t *testing.T) {
 		}
 	})
 
+	t.Run("the same expense again: the draft warns (plan 3.9)", func(t *testing.T) {
+		c := one(t, b.say("café 2500"), "sendMessage")
+		if !strings.Contains(text(c), "⚠️ Parecido a uno que ya está: Café · $ 2.500 · hoy\n") {
+			t.Fatalf("draft %q", text(c))
+		}
+		// Left unsaved: the chat allows 20 updates a minute and the clock stands still.
+		if n := expenseCount(t, s, u.ID); n != 1 {
+			t.Fatalf("expenses %d", n)
+		}
+	})
+
 	t.Run("correct with the pencil, then cancel", func(t *testing.T) {
 		c := one(t, b.say("super 15000 visa galicia"), "sendMessage")
 		if !strings.Contains(text(c), "Visa Galicia") || !strings.Contains(text(c), "¿Lo guardo?") {

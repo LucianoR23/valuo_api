@@ -123,3 +123,24 @@ RETURNING *;
 -- name: DeleteSharesByExpense :exec
 DELETE FROM expense_installment_shares
 WHERE installment_id IN (SELECT id FROM expense_installments WHERE expense_id = $1);
+
+-- name: ListDuplicateCandidates :many
+-- Expenses of the space that may be the one being loaded (plan 3.9): the
+-- confirmed ones with a close amount and date, and the pending drafts of a
+-- variable recurring expense near that date with any amount. The service
+-- compares the descriptions.
+SELECT e.id, e.description, e.amount, e.currency, e.spent_at, e.status,
+       e.created_by, u.first_name AS created_by_name
+FROM expenses e
+JOIN users u ON u.id = e.created_by
+WHERE e.household_id = @household_id
+  AND e.currency = @currency
+  AND (
+    (e.status = 'confirmed'
+      AND e.amount BETWEEN @min_amount::numeric AND @max_amount::numeric
+      AND e.spent_at BETWEEN @from_date::date AND @to_date::date)
+    OR (e.status = 'draft'
+      AND e.spent_at BETWEEN @draft_from::date AND @draft_to::date)
+  )
+ORDER BY e.status = 'draft' DESC, e.spent_at DESC, e.created_at DESC
+LIMIT 50;

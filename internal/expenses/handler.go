@@ -52,6 +52,7 @@ func (h *Handler) Mount(r chi.Router) {
 		r.Route("/expenses", func(r chi.Router) {
 			r.Get("/", h.List)
 			r.Get("/drafts", h.ListDrafts)
+			r.Post("/duplicates", h.Duplicates)
 			r.Post("/parse", h.Parse)
 			r.Post("/parse-audio", h.ParseAudio)
 			r.Post("/", h.Create)
@@ -416,6 +417,59 @@ func (h *Handler) ListDrafts(w http.ResponseWriter, r *http.Request) {
 	out := make([]expenseDTO, len(items))
 	for i, e := range items {
 		out[i] = toExpenseDTO(e)
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+type duplicatesReq struct {
+	Description string  `json:"description"`
+	Amount      float64 `json:"amount"`
+	Currency    string  `json:"currency"`
+	SpentAt     string  `json:"spentAt"`
+}
+
+type duplicateDTO struct {
+	ID            uuid.UUID       `json:"id"`
+	Description   string          `json:"description"`
+	Amount        decimal.Decimal `json:"amount"`
+	Currency      string          `json:"currency"`
+	SpentAt       string          `json:"spentAt"`
+	Status        string          `json:"status"`
+	CreatedBy     uuid.UUID       `json:"createdBy"`
+	CreatedByName string          `json:"createdByName"`
+}
+
+// Duplicates: POST /expenses/duplicates (plan 3.9). A POST so the
+// description stays out of URLs and logs.
+func (h *Handler) Duplicates(w http.ResponseWriter, r *http.Request) {
+	_, householdID, err := h.ctxUserAndHousehold(r)
+	if err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	var req duplicatesReq
+	if err := decodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	spentAt, err := time.Parse("2006-01-02", req.SpentAt)
+	if err != nil {
+		httpx.WriteError(w, r, h.logger, domain.NewValidationError("spentAt", "formato debe ser YYYY-MM-DD"))
+		return
+	}
+	items, err := h.svc.Duplicates(r.Context(), householdID, DuplicateInput{
+		Description: req.Description, Amount: money.FromFloat(req.Amount), Currency: req.Currency, SpentAt: spentAt,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, h.logger, err)
+		return
+	}
+	out := make([]duplicateDTO, len(items))
+	for i, d := range items {
+		out[i] = duplicateDTO{
+			ID: d.ID, Description: d.Description, Amount: d.Amount, Currency: d.Currency,
+			SpentAt: d.SpentAt.Format("2006-01-02"), Status: d.Status, CreatedBy: d.CreatedBy, CreatedByName: d.CreatedByName,
+		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

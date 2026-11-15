@@ -4,6 +4,10 @@ Entries reference item IDs from `AHORRA_V2_PLAN.md` (workspace repo).
 
 ## Unreleased
 
+### 3.9 (API): duplicate detection
+- `POST /expenses/duplicates` (a POST so the description stays out of URLs and logs) lists up to 3 expenses of the space, from any member, that may be the one being loaded (criteria decided with the user): same currency, amount within 2%, date within a day, and a shared word of 3+ letters without accents (common words such as "con" or "pago" do not count). A pending bill of a variable recurring expense matches with a shared word and a date within 10 days, whatever its amount, and comes first. No schema change.
+- The Telegram card adds a warning line under the expense: "⚠️ Parecido a uno que ya está: Carrefour · $ 12.500 · ayer (Ana)", or for a pending bill "⚠️ Tenés pendiente Luz del 10/11. Si es esa factura, completala desde la app." The bot only warns; saving still takes ✅.
+
 ### 3.8 (API): rules and autocomplete
 - Migration 000050 (schema approved by the user): `rules`, one per space. The text matches whole words of the description, without accents or case ("Carrefour" finds "Carrefour Palermo", not "Carrefourcito"). Optional conditions: a payment method and an amount range in the space's currency. It fills a category, a payment method or both. Deleting the category or a payment method deletes its rules.
 - `GET/POST /rules`, `PATCH/DELETE /rules/{id}` for any member of the space. A payment method in a rule must be the caller's (one already in the rule can stay on an edit). At most `RULES_MAX_PER_SPACE` rules per space (default 50, decided with the user; the Free limit of 3 comes with the plans). A rule with the same text and conditions is a 409.

@@ -370,6 +370,11 @@ type Querier interface {
 	// La UI los muestra en un bloque "Pendientes" hasta que el usuario confirme
 	// el monto real de la factura.
 	ListDraftExpensesByHousehold(ctx context.Context, householdID uuid.UUID) ([]Expense, error)
+	// Expenses of the space that may be the one being loaded (plan 3.9): the
+	// confirmed ones with a close amount and date, and the pending drafts of a
+	// variable recurring expense near that date with any amount. The service
+	// compares the descriptions.
+	ListDuplicateCandidates(ctx context.Context, arg ListDuplicateCandidatesParams) ([]ListDuplicateCandidatesRow, error)
 	// One quote per day (the day's last, in the app's timezone) since a date,
 	// oldest first (plan 5.2).
 	ListExchangeRateHistory(ctx context.Context, arg ListExchangeRateHistoryParams) ([]ListExchangeRateHistoryRow, error)
