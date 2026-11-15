@@ -103,6 +103,7 @@ without superuser. Check with `\du`, `\l valuo_next` and `\ddp`.
 | `GEMINI_API_KEY` | Google AI Studio key, used for audio only. Staging: free tier is fine. Production: paid tier only (the free tier lets Google use the data) |
 | `AI_DAILY_BUDGET_USD` / `AI_USER_DAILY_USD` | global and per-person daily AI spend (default 3 and 0.05). At 50/80/100% of the global one every superadmin gets an email; at 100% AI pauses until midnight |
 | `AI_USER_PER_MINUTE` / `AI_USER_PER_DAY` | AI requests per person (default 10 and 100) |
+| `RULES_MAX_PER_SPACE` | most rules per space (plan 3.8). Default 50; the Free limit of 3 comes with the plans |
 | `AI_ROUTES` / `AI_PRICES` / `AI_DISABLED_TASKS` | model per task, prices in USD per million tokens, tasks switched off. Defaults in `internal/config/env.go`; update `AI_PRICES` when a provider changes its prices, or the budget is computed wrong |
 
 Provider-side limits are the last line of defense (plan §8.2): in the Claude Console set a

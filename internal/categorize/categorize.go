@@ -1,7 +1,7 @@
 // Package categorize suggests a category for a new expense from its
-// description (plan 8.4). It tries the cheap sources first: the space's own
-// history, and only then the AI, which counts against the person's AI
-// limits. The rules of plan 3.8 will go first in the same chain.
+// description (plan 8.4). It tries the cheap sources first: the space's
+// rules (plan 3.8), its own history, and only then the AI, which counts
+// against the person's AI limits. A rule can also fill the payment method.
 //
 // The AI receives only the description and the names of the space's
 // categories: no amount, date, people or emails (decided with the user).
@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	"github.com/LucianoR23/valuo_api/internal/ai"
 	"github.com/LucianoR23/valuo_api/internal/textnorm"
@@ -31,14 +32,29 @@ const maxOutputTokens = 100
 type Source string
 
 const (
+	SourceRule    Source = "rule"
 	SourceHistory Source = "history"
 	SourceAI      Source = "ai"
 )
 
-// Suggestion is a category for the description.
+// Suggestion is a category for the description. CategoryID is uuid.Nil
+// when only a rule's payment method was found.
 type Suggestion struct {
 	CategoryID uuid.UUID
 	Source     Source
+	// PaymentMethodID is filled by a rule, only when Input had none.
+	PaymentMethodID *uuid.UUID
+}
+
+// Input is what is known of the new expense. Zero values are "not known".
+type Input struct {
+	Description     string
+	PaymentMethodID uuid.UUID
+	Amount          decimal.Decimal
+	// Currency of Amount; "" is the space's.
+	Currency string
+	// Channel is where the expense comes from, for ai_usage (app if empty).
+	Channel ai.Channel
 }
 
 // Category is one category of the space.
@@ -53,9 +69,10 @@ type Past struct {
 	CategoryID  uuid.UUID
 }
 
-// Store reads the space's categories and history (newest first).
+// Store reads the space's categories, rules and history (newest first).
 type Store interface {
 	Categories(ctx context.Context, householdID uuid.UUID) ([]Category, error)
+	Rules(ctx context.Context, householdID uuid.UUID) ([]Rule, error)
 	History(ctx context.Context, householdID uuid.UUID) ([]Past, error)
 }
 
@@ -85,7 +102,19 @@ func New(store Store, r Runner, logger *slog.Logger) *Suggester {
 // Suggest returns a category for the description, or false when no source
 // is confident. userID is who asks: the AI cost counts against them.
 func (s *Suggester) Suggest(ctx context.Context, userID, householdID uuid.UUID, description string) (Suggestion, bool, error) {
-	description = strings.TrimSpace(description)
+	sg, ok, err := s.SuggestFor(ctx, userID, householdID, Input{Description: description})
+	if err != nil || !ok || sg.CategoryID == uuid.Nil {
+		return Suggestion{}, false, err
+	}
+	sg.PaymentMethodID = nil
+	return sg, true, nil
+}
+
+// SuggestFor runs the chain with everything known of the expense: the
+// rules first, then history and AI for the category no rule gave. It
+// returns false when nothing was found.
+func (s *Suggester) SuggestFor(ctx context.Context, userID, householdID uuid.UUID, in Input) (Suggestion, bool, error) {
+	description := strings.TrimSpace(in.Description)
 	if utf8.RuneCountInString(description) > MaxDescriptionRunes {
 		description = string([]rune(description)[:MaxDescriptionRunes])
 	}
@@ -105,18 +134,34 @@ func (s *Suggester) Suggest(ctx context.Context, userID, householdID uuid.UUID, 
 		known[c.ID] = true
 	}
 
+	rules, err := s.store.Rules(ctx, householdID)
+	if err != nil {
+		return Suggestion{}, false, err
+	}
+	var out Suggestion
+	cat, pm := matchRules(rules, userID, key, in, known)
+	out.PaymentMethodID = pm
+	if cat != uuid.Nil {
+		out.CategoryID, out.Source = cat, SourceRule
+		return out, true, nil
+	}
 	past, err := s.store.History(ctx, householdID)
 	if err != nil {
 		return Suggestion{}, false, err
 	}
 	if id, ok := fromHistory(key, past, known); ok {
-		return Suggestion{CategoryID: id, Source: SourceHistory}, true, nil
+		out.CategoryID, out.Source = id, SourceHistory
+		return out, true, nil
 	}
-
-	if id, ok := s.fromAI(ctx, userID, householdID, description, key, cats); ok {
-		return Suggestion{CategoryID: id, Source: SourceAI}, true, nil
+	channel := in.Channel
+	if channel == "" {
+		channel = ai.ChannelApp
 	}
-	return Suggestion{}, false, nil
+	if id, ok := s.fromAI(ctx, userID, householdID, channel, description, key, cats); ok {
+		out.CategoryID, out.Source = id, SourceAI
+		return out, true, nil
+	}
+	return out, out.PaymentMethodID != nil, nil
 }
 
 // fromHistory looks for earlier expenses with the same description, and
@@ -212,7 +257,7 @@ func (a *answer) Validate() error {
 	return nil
 }
 
-func (s *Suggester) fromAI(ctx context.Context, userID, householdID uuid.UUID, description, key string, cats []Category) (uuid.UUID, bool) {
+func (s *Suggester) fromAI(ctx context.Context, userID, householdID uuid.UUID, channel ai.Channel, description, key string, cats []Category) (uuid.UUID, bool) {
 	if s.ai == nil || !s.ai.Enabled() || letters(key) < 3 {
 		return uuid.Nil, false
 	}
@@ -238,7 +283,7 @@ func (s *Suggester) fromAI(ctx context.Context, userID, householdID uuid.UUID, d
 	var out answer
 	err := s.ai.Run(ctx, ai.Request{
 		UserID: userID, HouseholdID: &hh,
-		Task: ai.TaskCategorize, Channel: ai.ChannelApp,
+		Task: ai.TaskCategorize, Channel: channel,
 		PromptVersion: s.prompt.Version, System: s.prompt.System,
 		Parts:           []ai.Part{ai.TextPart("<description>" + string(desc) + "</description>\n<categories>" + string(list) + "</categories>")},
 		Schema:          schema,

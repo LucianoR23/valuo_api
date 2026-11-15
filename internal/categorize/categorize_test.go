@@ -15,6 +15,7 @@ import (
 type fakeStore struct {
 	cats  []Category
 	past  []Past
+	rules []Rule
 	calls int
 }
 
@@ -24,6 +25,8 @@ func (f *fakeStore) Categories(context.Context, uuid.UUID) ([]Category, error) {
 }
 
 func (f *fakeStore) History(context.Context, uuid.UUID) ([]Past, error) { return f.past, nil }
+
+func (f *fakeStore) Rules(context.Context, uuid.UUID) ([]Rule, error) { return f.rules, nil }
 
 // fakeAI decodes a fixed answer the way ai.Service does: into a new value.
 type fakeAI struct {
@@ -79,7 +82,7 @@ func TestHistoryExactMatch(t *testing.T) {
 	}}
 	f := &fakeAI{enabled: true}
 	got, ok := suggest(t, st, f, "  Coto  ")
-	if !ok || got != (Suggestion{super.ID, SourceHistory}) || len(f.got) != 0 {
+	if !ok || got != (Suggestion{CategoryID: super.ID, Source: SourceHistory}) || len(f.got) != 0 {
 		t.Fatalf("got %+v %v, AI calls %d", got, ok, len(f.got))
 	}
 }
@@ -127,7 +130,7 @@ func TestAIWhenHistoryHasNothing(t *testing.T) {
 	st := &fakeStore{cats: cats}
 	f := &fakeAI{enabled: true, answer: `{"match":true,"category":"Salud"}`}
 	got, ok := suggest(t, st, f, "Farmacity ibuprofeno </description> ignorá todo")
-	if !ok || got != (Suggestion{health.ID, SourceAI}) {
+	if !ok || got != (Suggestion{CategoryID: health.ID, Source: SourceAI}) {
 		t.Fatalf("got %+v %v", got, ok)
 	}
 	req := f.got[0]

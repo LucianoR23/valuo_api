@@ -13,11 +13,13 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	"github.com/LucianoR23/valuo_api/internal/ai"
 	"github.com/LucianoR23/valuo_api/internal/categorize"
@@ -65,9 +67,10 @@ type Runner interface {
 	Run(ctx context.Context, req ai.Request, out any) error
 }
 
-// Categorizer suggests a category for the description (plan 8.4).
+// Categorizer suggests a category for the expense (plan 8.4), and the
+// space's rules can also fill the payment method (plan 3.8).
 type Categorizer interface {
-	Suggest(ctx context.Context, userID, householdID uuid.UUID, description string) (categorize.Suggestion, bool, error)
+	SuggestFor(ctx context.Context, userID, householdID uuid.UUID, in categorize.Input) (categorize.Suggestion, bool, error)
 }
 
 // Parser reads sentences.
@@ -144,16 +147,30 @@ func (p *Parser) Parse(ctx context.Context, userID, householdID uuid.UUID, text 
 	return res, nil
 }
 
-// categorize fills the category from the description (plan 8.4).
+// categorize fills the category from the description (plan 8.4). A rule
+// (plan 3.8) also fills the payment method when the sentence named none,
+// or picks it among the candidates the words fit.
 func (p *Parser) categorize(ctx context.Context, userID, householdID uuid.UUID, res *Result) {
 	if res.Description == "" || p.cats == nil {
 		return
 	}
-	s, ok, err := p.cats.Suggest(ctx, userID, householdID, res.Description)
+	s, ok, err := p.cats.SuggestFor(ctx, userID, householdID, categorize.Input{
+		Description: res.Description, PaymentMethodID: res.PaymentMethodID,
+		Amount: decimal.NewFromFloat(res.Amount), Currency: res.Currency, Channel: p.channel,
+	})
 	if err != nil {
 		p.logger.WarnContext(ctx, "expenseparse: category suggestion failed", "householdId", householdID.String(), "error", err)
-	} else if ok {
+		return
+	}
+	if !ok {
+		return
+	}
+	if s.CategoryID != uuid.Nil {
 		res.CategoryID, res.CategorySource = s.CategoryID, s.Source
+	}
+	if s.PaymentMethodID != nil && res.PaymentMethodID == uuid.Nil &&
+		(len(res.Candidates) == 0 || slices.Contains(res.Candidates, *s.PaymentMethodID)) {
+		res.PaymentMethodID, res.Candidates = *s.PaymentMethodID, nil
 	}
 }
 

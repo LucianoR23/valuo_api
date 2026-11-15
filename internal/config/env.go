@@ -145,6 +145,10 @@ type Config struct {
 	AIUserPerMinute  int
 	AIUserPerDay     int
 
+	// RulesMaxPerSpace caps the rules of a space (plan 3.8). The Free limit
+	// of 3 comes with the plans.
+	RulesMaxPerSpace int
+
 	// Error monitoring (plan 0.12): GlitchTip, Sentry compatible. Empty DSN
 	// turns reporting off. GlitchTipEnvironment tells staging from prod in
 	// the dashboard (both run with ENV=prod); it defaults to Env.
@@ -203,6 +207,13 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	rulesMax, err := parseInt("RULES_MAX_PER_SPACE", 50)
+	if err != nil {
+		return nil, err
+	}
+	if rulesMax < 1 {
+		return nil, fmt.Errorf("config: RULES_MAX_PER_SPACE debe ser al menos 1")
+	}
 
 	cfg := &Config{
 		Port:                   getOrDefault("PORT", "8080"),
@@ -257,6 +268,7 @@ func Load() (*Config, error) {
 		AIUserDailyUSD:         aiUserBudget,
 		AIUserPerMinute:        aiPerMinute,
 		AIUserPerDay:           aiPerDay,
+		RulesMaxPerSpace:       rulesMax,
 	}
 
 	cfg.WaitlistAllowedOrigins = splitAndTrim(getOrDefault("WAITLIST_ALLOWED_ORIGINS", cfg.WaitlistSiteURL), ",")

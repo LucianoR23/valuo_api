@@ -122,6 +122,7 @@ func New(t testing.TB, opts ...Option) *Server {
 		AIUserDailyUSD:   0.05,
 		AIUserPerMinute:  10,
 		AIUserPerDay:     100,
+		RulesMaxPerSpace: 50,
 	}
 	mail := &FakeMailer{}
 	g := &FakeGoogle{}

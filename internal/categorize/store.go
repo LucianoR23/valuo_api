@@ -5,9 +5,12 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/shopspring/decimal"
 
 	sqlcgen "github.com/LucianoR23/valuo_api/internal/db/sqlc"
+	"github.com/LucianoR23/valuo_api/internal/money"
 )
 
 // PGStore reads categories and history from Postgres.
@@ -44,4 +47,31 @@ func (s *PGStore) History(ctx context.Context, householdID uuid.UUID) ([]Past, e
 		}
 	}
 	return out, nil
+}
+
+func (s *PGStore) Rules(ctx context.Context, householdID uuid.UUID) ([]Rule, error) {
+	rows, err := s.q.ListRulesForMatch(ctx, householdID)
+	if err != nil {
+		return nil, fmt.Errorf("categorize: rules: %w", err)
+	}
+	out := make([]Rule, len(rows))
+	for i, r := range rows {
+		out[i] = Rule{
+			ID: r.ID, Key: r.MatchKey, PaymentMethodID: r.PaymentMethodID,
+			Min: decimalPtr(r.MinAmount), Max: decimalPtr(r.MaxAmount),
+			CategoryID: r.SetCategoryID, SetPaymentMethodID: r.SetPaymentMethodID,
+			SetOwnerID: r.SetOwnerID, SetActive: r.SetActive,
+			BaseCurrency: r.BaseCurrency, CreatedAt: r.CreatedAt.Time,
+		}
+	}
+	return out, nil
+}
+
+// decimalPtr is nil for a NULL numeric.
+func decimalPtr(n pgtype.Numeric) *decimal.Decimal {
+	if !n.Valid {
+		return nil
+	}
+	d := money.FromNumeric(n)
+	return &d
 }

@@ -4,6 +4,13 @@ Entries reference item IDs from `AHORRA_V2_PLAN.md` (workspace repo).
 
 ## Unreleased
 
+### 3.8 (API): rules and autocomplete
+- Migration 000050 (schema approved by the user): `rules`, one per space. The text matches whole words of the description, without accents or case ("Carrefour" finds "Carrefour Palermo", not "Carrefourcito"). Optional conditions: a payment method and an amount range in the space's currency. It fills a category, a payment method or both. Deleting the category or a payment method deletes its rules.
+- `GET/POST /rules`, `PATCH/DELETE /rules/{id}` for any member of the space. A payment method in a rule must be the caller's (one already in the rule can stay on an edit). At most `RULES_MAX_PER_SPACE` rules per space (default 50, decided with the user; the Free limit of 3 comes with the plans). A rule with the same text and conditions is a 409.
+- Rules go first in `internal/categorize` (decided with the user): the one with more conditions wins, then the longer text, then the newest. `categorize.SuggestFor` takes the description, amount, currency and payment method; a rule fills the payment method only when none was chosen, only with the person's own active one (the payment method of a Hogar rule is only used by its owner). Used by the sentence of "Contalo como te salga" (it also picks among the candidates the words fit) and by the Telegram bot. `POST /categories/suggest` answers `source: "rule"`.
+- Category suggestions now record the channel they come from, so the bot's are `telegram` (fixes the known gap of 3.6).
+- `GET /descriptions`: the space's descriptions of the last 12 months, most used first, spellings of the same words counted as one (up to 200), for autocomplete in Cargar gasto.
+
 ### 3.6 (API part 2): voice notes, photos and automatic AI suspension
 - The bot reads voice notes and audio up to 30 seconds (`ParseAudio`, Ogg/Opus from Telegram) and photos (the largest size under 5 MB) or images sent as files (`ParseReceipt`), downloaded into memory only. The card starts with what was heard or read ("Escuché: «…»", "Leí: «…»"); ✏️ and the buttons work as for text. Other files get a fixed reply. Help text updated.
 - Automatic AI suspension (plan §8.6, defaults decided with the user): parse answers that say "not an expense" are recorded as `off_topic` when a person wrote them (app, Telegram, WhatsApp; never mail). 5 in a day, or a day's AI cost over 10 times the average day of the other accounts in the last 7 days and over US$ 0.01, set `users.ai_suspended_until` to 24 h later. A suspended account's calls are refused and recorded as `suspended` without reaching a provider; typed amounts still work through the rules, and the bot says the reading is paused. Superadmins get one email per suspension.

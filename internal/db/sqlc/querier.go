@@ -99,6 +99,7 @@ type Querier interface {
 	// "Mi plata" goes with the account (plan 1.2).
 	CountHouseholdsOwnedByUser(ctx context.Context, userID uuid.UUID) (int64, error)
 	CountIncomesByHousehold(ctx context.Context, arg CountIncomesByHouseholdParams) (int64, error)
+	CountRules(ctx context.Context, householdID uuid.UUID) (int64, error)
 	// Caps what an unknown sender can pile up in someone's list.
 	CountSenderPending(ctx context.Context, userID uuid.UUID) (int32, error)
 	// Only what the viewer may see: household-level insights and their own
@@ -153,6 +154,7 @@ type Querier interface {
 	CreateRecurringExpense(ctx context.Context, arg CreateRecurringExpenseParams) (RecurringExpense, error)
 	// ===================== recurring_incomes =====================
 	CreateRecurringIncome(ctx context.Context, arg CreateRecurringIncomeParams) (RecurringIncome, error)
+	CreateRule(ctx context.Context, arg CreateRuleParams) (Rule, error)
 	CreateSettlement(ctx context.Context, arg CreateSettlementParams) (SettlementPayment, error)
 	CreateTelegramDraft(ctx context.Context, arg CreateTelegramDraftParams) (TelegramDraft, error)
 	CreateTelegramLinkCode(ctx context.Context, arg CreateTelegramLinkCodeParams) error
@@ -190,6 +192,7 @@ type Querier interface {
 	DeleteOldTelegramRows(ctx context.Context, arg DeleteOldTelegramRowsParams) (int64, error)
 	DeleteRecurringExpense(ctx context.Context, id uuid.UUID) error
 	DeleteRecurringIncome(ctx context.Context, id uuid.UUID) error
+	DeleteRule(ctx context.Context, arg DeleteRuleParams) (int64, error)
 	DeleteSettlement(ctx context.Context, id uuid.UUID) error
 	DeleteSharesByExpense(ctx context.Context, expenseID uuid.UUID) error
 	// Normalmente no se usa (al sacar miembro el CASCADE lo limpia), pero
@@ -264,6 +267,7 @@ type Querier interface {
 	GetPersonalHouseholdForUser(ctx context.Context, createdBy uuid.UUID) (Household, error)
 	GetRecurringExpenseByID(ctx context.Context, id uuid.UUID) (RecurringExpense, error)
 	GetRecurringIncomeByID(ctx context.Context, id uuid.UUID) (RecurringIncome, error)
+	GetRule(ctx context.Context, arg GetRuleParams) (Rule, error)
 	GetSettlementByID(ctx context.Context, id uuid.UUID) (SettlementPayment, error)
 	GetSplitRule(ctx context.Context, arg GetSplitRuleParams) (HouseholdSplitRule, error)
 	GetTelegramDraft(ctx context.Context, arg GetTelegramDraftParams) (TelegramDraft, error)
@@ -403,6 +407,9 @@ type Querier interface {
 	ListPaymentMethodsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]PaymentMethod, error)
 	// Invitaciones activas (no aceptadas, no revocadas, no expiradas) de un hogar.
 	ListPendingInvitesForHousehold(ctx context.Context, householdID uuid.UUID) ([]HouseholdInvite, error)
+	// Descriptions of the space's confirmed expenses since a date, most used
+	// first: what Cargar gasto offers while typing (plan 3.8).
+	ListRecentDescriptions(ctx context.Context, arg ListRecentDescriptionsParams) ([]ListRecentDescriptionsRow, error)
 	ListRecurringExpensesByHousehold(ctx context.Context, householdID uuid.UUID) ([]RecurringExpense, error)
 	ListRecurringIncomesByHousehold(ctx context.Context, householdID uuid.UUID) ([]RecurringIncome, error)
 	// ===================== suggestions (plan 7.3) =====================
@@ -410,6 +417,11 @@ type Querier interface {
 	// grouping into "repeats every month" happens in Go.
 	ListRecurringSuggestionCandidates(ctx context.Context, arg ListRecurringSuggestionCandidatesParams) ([]ListRecurringSuggestionCandidatesRow, error)
 	ListRecurringSuggestionDismissals(ctx context.Context, householdID uuid.UUID) ([]string, error)
+	// Rules that fill a new expense (plan 3.8).
+	ListRules(ctx context.Context, householdID uuid.UUID) ([]Rule, error)
+	// The space's rules with what the matcher needs: the space's currency, and
+	// the owner and state of the payment method a rule fills.
+	ListRulesForMatch(ctx context.Context, householdID uuid.UUID) ([]ListRulesForMatchRow, error)
 	ListSharesByExpense(ctx context.Context, expenseID uuid.UUID) ([]ExpenseInstallmentShare, error)
 	ListSplitRulesByHousehold(ctx context.Context, householdID uuid.UUID) ([]HouseholdSplitRule, error)
 	ListSuperadminEmails(ctx context.Context) ([]string, error)
@@ -630,6 +642,7 @@ type Querier interface {
 	// que se liste la serie aparezca el monto real más reciente sin recomputar.
 	UpdateRecurringExpenseLastAmount(ctx context.Context, arg UpdateRecurringExpenseLastAmountParams) error
 	UpdateRecurringIncome(ctx context.Context, arg UpdateRecurringIncomeParams) (RecurringIncome, error)
+	UpdateRule(ctx context.Context, arg UpdateRuleParams) (Rule, error)
 	UpdateTelegramDraftFields(ctx context.Context, arg UpdateTelegramDraftFieldsParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	// Actualiza nombre/apellido/email en una sola query. El caller es

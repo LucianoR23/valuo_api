@@ -57,6 +57,7 @@ import (
 	"github.com/LucianoR23/valuo_api/internal/recurringexpenses"
 	"github.com/LucianoR23/valuo_api/internal/reminders"
 	"github.com/LucianoR23/valuo_api/internal/reports"
+	"github.com/LucianoR23/valuo_api/internal/rules"
 	"github.com/LucianoR23/valuo_api/internal/settlements"
 	"github.com/LucianoR23/valuo_api/internal/simulations"
 	"github.com/LucianoR23/valuo_api/internal/splitrules"
@@ -307,6 +308,8 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, logger *sl
 
 	paymethodsHandler := paymethods.NewHandler(paymethodsSvc, authMW, logger)
 	categoriesHandler := categories.NewHandler(categoriesSvc, authMW, householdsMW, logger)
+	// Rules that fill a new expense, and descriptions for autocomplete (plan 3.8).
+	rulesHandler := rules.NewHandler(rules.NewService(pool, cfg.RulesMaxPerSpace, dates.Location(), opts.Now), authMW, householdsMW, logger)
 
 	// creditperiods: montado bajo /payment-methods/{id}/credit-card/periods/*.
 	// Reusa paymethodsSvc para validar ownership y resolver credit_card_id.
@@ -707,6 +710,9 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, logger *sl
 
 		// Categories (auth + household member requerido).
 		categoriesHandler.Mount(r)
+
+		// Rules and autocomplete (auth + household member).
+		rulesHandler.Mount(r)
 
 		// Exchange rates (auth requerido).
 		fxHandler.Mount(r)

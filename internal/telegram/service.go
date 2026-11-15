@@ -22,6 +22,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/shopspring/decimal"
 
+	"github.com/LucianoR23/valuo_api/internal/ai"
+	"github.com/LucianoR23/valuo_api/internal/categorize"
 	sqlcgen "github.com/LucianoR23/valuo_api/internal/db/sqlc"
 	"github.com/LucianoR23/valuo_api/internal/domain"
 	"github.com/LucianoR23/valuo_api/internal/expenseparse"
@@ -490,7 +492,10 @@ func (s *Service) newDraft(ctx context.Context, userID uuid.UUID, personal domai
 			space = hogar
 			catID = uuid.Nil
 			if s.Categorizer != nil && res.Description != "" {
-				if sg, ok, err := s.Categorizer.Suggest(ctx, userID, hogar.ID, res.Description); err == nil && ok {
+				if sg, ok, err := s.Categorizer.SuggestFor(ctx, userID, hogar.ID, categorize.Input{
+					Description: res.Description, PaymentMethodID: res.PaymentMethodID,
+					Amount: decimal.NewFromFloat(res.Amount), Currency: res.Currency, Channel: ai.ChannelTelegram,
+				}); err == nil && ok && sg.CategoryID != uuid.Nil {
 					catID = sg.CategoryID
 				}
 			}

@@ -114,6 +114,7 @@ Ver [`.env.example`](./.env.example). Resumen:
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | no | keys de los proveedores de IA. Sin ellas las tareas que los usan fallan y la gente carga a mano |
 | `AI_DAILY_BUDGET_USD` / `AI_USER_DAILY_USD` / `AI_USER_PER_MINUTE` / `AI_USER_PER_DAY` | no (3 / 0.05 / 10 / 100) | topes de IA: gasto diario total y por persona, pedidos por minuto y por día |
 | `AI_ROUTES` / `AI_PRICES` / `AI_DISABLED_TASKS` | no | modelo por tarea, precios por millón de tokens y tareas apagadas. Defaults en `internal/config/env.go` |
+| `RULES_MAX_PER_SPACE` | no (50) | máximo de reglas por espacio (plan 3.8) |
 
 ## Arquitectura
 
