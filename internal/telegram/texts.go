@@ -5,9 +5,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
 	"github.com/LucianoR23/valuo_api/internal/domain"
+	"github.com/LucianoR23/valuo_api/internal/expenses"
 	"github.com/LucianoR23/valuo_api/internal/money"
 )
 
@@ -70,6 +72,30 @@ func (s *Service) summary1(d draft) string {
 		parts = append(parts, "Hogar")
 	}
 	return d.Description + " · " + formatAmount(d) + "\n" + strings.Join(parts, " · ")
+}
+
+// similarLine is the draft's duplicate warning under the summary.
+func similarLine(d draft) string {
+	if d.Similar == "" {
+		return ""
+	}
+	return "\n\n" + d.Similar
+}
+
+// similarText describes a possible duplicate (plan 3.9):
+//
+//	⚠️ Parecido a uno que ya está: Carrefour · $ 12.500 · ayer (Ana)
+//	⚠️ Tenés pendiente Luz del 10/11. Si es esa factura, completala desde la app.
+func (s *Service) similarText(userID uuid.UUID, dup expenses.Duplicate) string {
+	day := s.day(dup.SpentAt.Format(time.DateOnly))
+	if dup.Status == "draft" {
+		return "⚠️ Tenés pendiente " + dup.Description + " del " + day + ". Si es esa factura, completala desde la app."
+	}
+	who := ""
+	if dup.CreatedBy != userID && dup.CreatedByName != "" {
+		who = " (" + dup.CreatedByName + ")"
+	}
+	return "⚠️ Parecido a uno que ya está: " + dup.Description + " · " + money.Format(dup.Amount, dup.Currency) + " · " + day + who
 }
 
 // day is "hoy", "ayer" or "12/11".

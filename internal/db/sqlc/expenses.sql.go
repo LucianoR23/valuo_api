@@ -351,6 +351,88 @@ func (q *Queries) ListDraftExpensesByHousehold(ctx context.Context, householdID 
 	return items, nil
 }
 
+const listDuplicateCandidates = `-- name: ListDuplicateCandidates :many
+SELECT e.id, e.description, e.amount, e.currency, e.spent_at, e.status,
+       e.created_by, u.first_name AS created_by_name
+FROM expenses e
+JOIN users u ON u.id = e.created_by
+WHERE e.household_id = $1
+  AND e.currency = $2
+  AND (
+    (e.status = 'confirmed'
+      AND e.amount BETWEEN $3::numeric AND $4::numeric
+      AND e.spent_at BETWEEN $5::date AND $6::date)
+    OR (e.status = 'draft'
+      AND e.spent_at BETWEEN $7::date AND $8::date)
+  )
+ORDER BY e.status = 'draft' DESC, e.spent_at DESC, e.created_at DESC
+LIMIT 50
+`
+
+type ListDuplicateCandidatesParams struct {
+	HouseholdID uuid.UUID      `json:"household_id"`
+	Currency    string         `json:"currency"`
+	MinAmount   pgtype.Numeric `json:"min_amount"`
+	MaxAmount   pgtype.Numeric `json:"max_amount"`
+	FromDate    pgtype.Date    `json:"from_date"`
+	ToDate      pgtype.Date    `json:"to_date"`
+	DraftFrom   pgtype.Date    `json:"draft_from"`
+	DraftTo     pgtype.Date    `json:"draft_to"`
+}
+
+type ListDuplicateCandidatesRow struct {
+	ID            uuid.UUID      `json:"id"`
+	Description   string         `json:"description"`
+	Amount        pgtype.Numeric `json:"amount"`
+	Currency      string         `json:"currency"`
+	SpentAt       pgtype.Date    `json:"spent_at"`
+	Status        string         `json:"status"`
+	CreatedBy     uuid.UUID      `json:"created_by"`
+	CreatedByName string         `json:"created_by_name"`
+}
+
+// Expenses of the space that may be the one being loaded (plan 3.9): the
+// confirmed ones with a close amount and date, and the pending drafts of a
+// variable recurring expense near that date with any amount. The service
+// compares the descriptions.
+func (q *Queries) ListDuplicateCandidates(ctx context.Context, arg ListDuplicateCandidatesParams) ([]ListDuplicateCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listDuplicateCandidates,
+		arg.HouseholdID,
+		arg.Currency,
+		arg.MinAmount,
+		arg.MaxAmount,
+		arg.FromDate,
+		arg.ToDate,
+		arg.DraftFrom,
+		arg.DraftTo,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDuplicateCandidatesRow{}
+	for rows.Next() {
+		var i ListDuplicateCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Description,
+			&i.Amount,
+			&i.Currency,
+			&i.SpentAt,
+			&i.Status,
+			&i.CreatedBy,
+			&i.CreatedByName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listExpensesBySeries = `-- name: ListExpensesBySeries :many
 SELECT id, household_id, created_by, category_id, payment_method_id, amount, currency, amount_base, base_currency, rate_used, rate_at, description, spent_at, installments, is_shared, created_at, updated_at, recurring_expense_id, status, rate_source FROM expenses
 WHERE recurring_expense_id = $1 AND status = 'confirmed'

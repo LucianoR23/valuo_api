@@ -10,6 +10,7 @@ import (
 
 	sqlcgen "github.com/LucianoR23/valuo_api/internal/db/sqlc"
 	"github.com/LucianoR23/valuo_api/internal/domain"
+	"github.com/LucianoR23/valuo_api/internal/expenses"
 )
 
 func TestStartCode(t *testing.T) {
@@ -172,5 +173,27 @@ func TestPickFile(t *testing.T) {
 	}
 	if heardLine(draft{}) != "" || heardLine(draft{Heard: "Leí: «x»"}) != "Leí: «x»\n\n" {
 		t.Error("heard line")
+	}
+}
+
+func TestSimilarText(t *testing.T) {
+	ar, _ := time.LoadLocation("America/Argentina/Buenos_Aires")
+	now := time.Date(2026, 11, 15, 15, 0, 0, 0, time.UTC)
+	s := NewService(Deps{}, Config{Location: ar, Now: func() time.Time { return now }})
+	me, ana := uuid.New(), uuid.New()
+	dup := expenses.Duplicate{Description: "Carrefour", Amount: decimal.NewFromInt(12500), Currency: "ARS",
+		SpentAt: time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC), Status: "confirmed", CreatedBy: ana, CreatedByName: "Ana"}
+	if got, want := s.similarText(me, dup), "⚠️ Parecido a uno que ya está: Carrefour · $ 12.500 · ayer (Ana)"; got != want {
+		t.Errorf("another member's: %q, want %q", got, want)
+	}
+	if got := s.similarText(ana, dup); strings.Contains(got, "(Ana)") {
+		t.Errorf("own expense names its author: %q", got)
+	}
+	dup.Status, dup.Description, dup.SpentAt = "draft", "Luz", time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	if got, want := s.similarText(me, dup), "⚠️ Tenés pendiente Luz del 10/11. Si es esa factura, completala desde la app."; got != want {
+		t.Errorf("pending bill: %q, want %q", got, want)
+	}
+	if similarLine(draft{}) != "" || similarLine(draft{Similar: "x"}) != "\n\nx" {
+		t.Error("similarLine")
 	}
 }

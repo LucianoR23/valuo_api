@@ -75,6 +75,7 @@ type Spaces interface {
 type Expenses interface {
 	Create(ctx context.Context, in expenses.CreateInput) (domain.ExpenseDetail, error)
 	Delete(ctx context.Context, householdID, id, actorUserID uuid.UUID) error
+	Duplicates(ctx context.Context, householdID uuid.UUID, in expenses.DuplicateInput) ([]expenses.Duplicate, error)
 }
 
 // Committer is "Comprometido" (statements.Service).
@@ -338,6 +339,8 @@ type draft struct {
 	Options      []option   `json:"options,omitempty"`
 	// Heard is what a voice note said or an image showed (shown above).
 	Heard string `json:"heard,omitempty"`
+	// Similar warns of an expense that may be this one (plan 3.9).
+	Similar string `json:"similar,omitempty"`
 }
 
 func (s *Service) expense(ctx context.Context, chatID int64, userID uuid.UUID, text string) {
@@ -553,7 +556,33 @@ func (s *Service) newDraft(ctx context.Context, userID uuid.UUID, personal domai
 	if d.MethodID == nil {
 		d.Options = methodOptions(methods, res.Candidates)
 	}
+	d.Similar = s.similar(ctx, userID, d)
 	return d, nil
+}
+
+// similar is the warning line for an expense of the space that may be the
+// one in the draft, or "" (plan 3.9). The bot only warns: a pending bill is
+// completed from the app.
+func (s *Service) similar(ctx context.Context, userID uuid.UUID, d draft) string {
+	amount, err := decimal.NewFromString(d.Amount)
+	if err != nil || !amount.IsPositive() {
+		return ""
+	}
+	spent, err := time.Parse(time.DateOnly, d.SpentAt)
+	if err != nil {
+		return ""
+	}
+	dups, err := s.Expenses.Duplicates(ctx, d.HouseholdID, expenses.DuplicateInput{
+		Description: d.Description, Amount: amount, Currency: d.Currency, SpentAt: spent,
+	})
+	if err != nil {
+		s.cfg.Logger.WarnContext(ctx, "telegram: duplicates failed", "error", err)
+		return ""
+	}
+	if len(dups) == 0 {
+		return ""
+	}
+	return s.similarText(userID, dups[0])
 }
 
 // methodOptions: the candidates the words fit first, then the most used,
@@ -592,9 +621,9 @@ func (s *Service) card(id uuid.UUID, d draft) (string, Keyboard) {
 			kb = append(kb, row)
 		}
 		kb = append(kb, []InlineButton{{Text: "✏️ Corregir", CallbackData: "ed:" + sid}, {Text: "❌ Cancelar", CallbackData: "no:" + sid}})
-		return heardLine(d) + s.summary1(d) + "\n\n¿Con qué pagaste?", kb
+		return heardLine(d) + s.summary1(d) + similarLine(d) + "\n\n¿Con qué pagaste?", kb
 	}
-	return heardLine(d) + s.summary1(d) + "\n\n¿Lo guardo?", Keyboard{{
+	return heardLine(d) + s.summary1(d) + similarLine(d) + "\n\n¿Lo guardo?", Keyboard{{
 		{Text: "✅ Guardar", CallbackData: "ok:" + sid},
 		{Text: "✏️ Corregir", CallbackData: "ed:" + sid},
 		{Text: "❌ Cancelar", CallbackData: "no:" + sid},
