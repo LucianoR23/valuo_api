@@ -83,7 +83,7 @@ without superuser. Check with `\du`, `\l valuo_next` and `\ddp`.
 | `WAITLIST_FROM_EMAIL` | sender of the confirmation mail, on the verified domain (e.g. `Valuo <hola@valuo.ar>`); Resend **open and click tracking off** for that domain (the privacy policy promises it) |
 | `WAITLIST_CONTACT_EMAIL` | where people ask for deletion (`hola@valuo.ar`) |
 | `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile secret (widget in Invisible mode, hostname = the landing). Required with `ENV=prod`: without it every sign-up gets 403 |
-| `API_PUBLIC_URL` | this API's public origin (e.g. `https://api-next.valuo.ar`), for the one-click unsubscribe link. Unsubscribe tokens are signed with `JWT_SECRET`: rotating it breaks the links in mails already sent |
+| `API_PUBLIC_URL` | this API's public origin (e.g. `https://api-next.valuo.ar`), for the one-click unsubscribe link and as the OAuth issuer and MCP resource of the assistant connector (`API_PUBLIC_URL/mcp`, plan 8.6; see `docs/mcp-connector.md`). Unsubscribe tokens are signed with `JWT_SECRET`: rotating it breaks the links in mails already sent |
 | `APP_TIMEZONE` | IANA zone for "today", the current month and the daily jobs (default `America/Argentina/Buenos_Aires`; an invalid value stops startup) |
 | `*_FROM_EMAIL` (4) | sender on the verified domain (default `<BRAND_NAME> <onboarding@resend.dev>`) |
 | `SOPORTE_API_URL` / `SOPORTE_API_KEY` | empty = `/support/*` responds 503 |

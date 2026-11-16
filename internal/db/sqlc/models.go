@@ -335,6 +335,12 @@ type Income struct {
 	RateSource        pgtype.Text        `json:"rate_source"`
 }
 
+type McpCall struct {
+	GrantID uuid.UUID          `json:"grant_id"`
+	Hour    pgtype.Timestamptz `json:"hour"`
+	Count   int32              `json:"count"`
+}
+
 type NotificationPreference struct {
 	UserID          uuid.UUID          `json:"user_id"`
 	Disabled        []string           `json:"disabled"`
@@ -344,6 +350,54 @@ type NotificationPreference struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	ReminderEnabled bool               `json:"reminder_enabled"`
 	ReminderAt      pgtype.Time        `json:"reminder_at"`
+}
+
+type OauthClient struct {
+	ID           string             `json:"id"`
+	ClientName   string             `json:"client_name"`
+	RedirectUris []string           `json:"redirect_uris"`
+	AuthMethod   string             `json:"auth_method"`
+	SecretHash   []byte             `json:"secret_hash"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type OauthCode struct {
+	CodeHash      []byte             `json:"code_hash"`
+	GrantID       uuid.UUID          `json:"grant_id"`
+	RedirectUri   string             `json:"redirect_uri"`
+	CodeChallenge string             `json:"code_challenge"`
+	Scopes        []string           `json:"scopes"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	UsedAt        pgtype.Timestamptz `json:"used_at"`
+}
+
+type OauthGrant struct {
+	ID         uuid.UUID          `json:"id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	ClientID   string             `json:"client_id"`
+	Scopes     []string           `json:"scopes"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+}
+
+type OauthRequest struct {
+	ID            uuid.UUID          `json:"id"`
+	ClientID      string             `json:"client_id"`
+	RedirectUri   string             `json:"redirect_uri"`
+	Scopes        []string           `json:"scopes"`
+	State         string             `json:"state"`
+	CodeChallenge string             `json:"code_challenge"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+}
+
+type OauthToken struct {
+	TokenHash []byte             `json:"token_hash"`
+	GrantID   uuid.UUID          `json:"grant_id"`
+	Kind      string             `json:"kind"`
+	Scopes    []string           `json:"scopes"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	RotatedAt pgtype.Timestamptz `json:"rotated_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type PasswordReset struct {

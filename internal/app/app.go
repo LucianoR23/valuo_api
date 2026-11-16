@@ -50,7 +50,9 @@ import (
 	"github.com/LucianoR23/valuo_api/internal/incomes"
 	"github.com/LucianoR23/valuo_api/internal/insights"
 	"github.com/LucianoR23/valuo_api/internal/jobs"
+	"github.com/LucianoR23/valuo_api/internal/mcpserver"
 	"github.com/LucianoR23/valuo_api/internal/notifprefs"
+	"github.com/LucianoR23/valuo_api/internal/oauth"
 	"github.com/LucianoR23/valuo_api/internal/ownership"
 	"github.com/LucianoR23/valuo_api/internal/paymethods"
 	"github.com/LucianoR23/valuo_api/internal/push"
@@ -134,6 +136,8 @@ type Jobs struct {
 	// TelegramCleanup deletes expired bot link codes and day-old drafts
 	// (nil with the bot off).
 	TelegramCleanup func(ctx context.Context) (deleted int64, err error)
+	// OAuthCleanup deletes expired OAuth rows and unused clients (plan 8.6).
+	OAuthCleanup func(ctx context.Context) (deleted int64, err error)
 }
 
 // Jobs returns the background jobs' units of work.
@@ -567,6 +571,27 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, logger *sl
 		return body, ok
 	})
 
+	// Connect your own AI assistant (plan 8.6): the API is the OAuth server
+	// and /mcp the MCP server, whose tools call this router in process as
+	// the person who connected. Open to every verified account until 2.1.
+	oauthSvc := oauth.NewService(pool, userRepo, oauth.Config{
+		Issuer: cfg.APIPublicURL, AppBaseURL: cfg.AppBaseURL, Now: opts.Now, Logger: logger,
+	})
+	oauthHandler := oauth.NewHandler(oauthSvc, authMW, auditRec, logger)
+	a.jobs.OAuthCleanup = oauthSvc.Cleanup
+	mcpHandler := mcpserver.New(mcpserver.Config{
+		OAuth: oauthSvc,
+		Token: func(userID uuid.UUID) (string, error) {
+			tok, _, err := tokenIssuer.IssueAccessToken(userID, uuid.Nil)
+			return tok, err
+		},
+		API:         func() http.Handler { return a.router },
+		Audit:       auditRec,
+		Brand:       cfg.BrandName,
+		MetadataURL: oauthHandler.ResourceMetadataURL(),
+		Logger:      logger,
+	}).Handler()
+
 	// support: proxy al servicio centralizado Lemy Support. Stateless, sin
 	// repo ni migración — solo usa userRepo para resolver el email del
 	// reporter (el JWT solo trae el userID). Si SOPORTE_API_KEY no está, el
@@ -628,6 +653,7 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, logger *sl
 		WaitlistCleanup:   waitlistSvc.Cleanup,
 		InboundCleanup:    inboundCleanup(inboundSvc),
 		TelegramCleanup:   a.jobs.TelegramCleanup,
+		OAuthCleanup:      a.jobs.OAuthCleanup,
 		DailyReminders:    a.jobs.DailyReminders,
 	}, logger)
 	if err != nil {
@@ -638,7 +664,18 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, logger *sl
 	a.jobs.DeliverPush = pushSvc.DeliverDeferred
 	r.Use(byPathPrefix("/waitlist", waitlistHandler.CORS()))
 
-	r.Use(skipPathPrefix("/waitlist", cors.Handler(cors.Options{
+	// Assistants (plan 8.6) call the OAuth endpoints and /mcp from anywhere
+	// with bearer tokens, never cookies: open CORS without credentials.
+	publicCORS := cors.Handler(cors.Options{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "Mcp-Protocol-Version", "Mcp-Session-Id"},
+		ExposedHeaders: []string{"WWW-Authenticate", "Mcp-Session-Id"},
+		MaxAge:         300,
+	})
+	r.Use(byPath(oauth.IsPublic, publicCORS))
+
+	r.Use(skipPath(func(p string) bool { return strings.HasPrefix(p, "/waitlist") || oauth.IsPublic(p) }, cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Household-ID", "X-Request-ID"},
@@ -760,6 +797,9 @@ func New(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, logger *sl
 		inboundHandler.Mount(r)
 		// Telegram's webhook (secret header) plus linking from the app (plan 3.6).
 		telegramHandler.Mount(r)
+		// OAuth server, consent and connections (plan 8.6), and the MCP server.
+		oauthHandler.Mount(r)
+		r.Handle("/mcp", mcpHandler)
 	})
 
 	// Waitlist (plan B.5): public, its own CORS and limits.
@@ -1029,18 +1069,23 @@ func byPathPrefix(prefix string, mw func(http.Handler) http.Handler) func(http.H
 	}
 }
 
-// skipPathPrefix applies mw to every request except those under prefix.
-func skipPathPrefix(prefix string, mw func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+// byPath applies mw only to requests whose path matches.
+func byPath(match func(string) bool, mw func(http.Handler) http.Handler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		wrapped := mw(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasPrefix(r.URL.Path, prefix) {
-				next.ServeHTTP(w, r)
+			if match(r.URL.Path) {
+				wrapped.ServeHTTP(w, r)
 				return
 			}
-			wrapped.ServeHTTP(w, r)
+			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// skipPath applies mw to every request except those whose path matches.
+func skipPath(match func(string) bool, mw func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	return byPath(func(p string) bool { return !match(p) }, mw)
 }
 
 // hostsOf: the hostnames of origins like "https://valuo.ar" (Turnstile

@@ -109,7 +109,7 @@ func (q *Queries) DeleteOldAuditEvents(ctx context.Context) (int64, error) {
 
 const listAuditEventsForUser = `-- name: ListAuditEventsForUser :many
 SELECT id, user_id, actor_id, action, target, ip, user_agent, device, metadata, created_at FROM audit_events
-WHERE user_id = $1
+WHERE user_id = $1 AND action <> 'mcp.call'
 ORDER BY created_at DESC
 LIMIT $2
 `
@@ -119,6 +119,8 @@ type ListAuditEventsForUserParams struct {
 	Limit  int32      `json:"limit"`
 }
 
+// Assistant tool calls (mcp.call, plan 8.6) stay out: hundreds a day would
+// bury the sign-ins.
 func (q *Queries) ListAuditEventsForUser(ctx context.Context, arg ListAuditEventsForUserParams) ([]AuditEvent, error) {
 	rows, err := q.db.Query(ctx, listAuditEventsForUser, arg.UserID, arg.Limit)
 	if err != nil {
