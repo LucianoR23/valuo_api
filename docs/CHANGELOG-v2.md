@@ -4,6 +4,15 @@ Entries reference item IDs from `AHORRA_V2_PLAN.md` (workspace repo).
 
 ## Unreleased
 
+### 8.6a (API): MCP connector, read only
+- A person connects their own AI assistant (Claude, ChatGPT) and asks it about their money. Open to every verified account until 2.1 limits it to paid plans (decided with the user). No AI calls on our side. Details in `docs/mcp-connector.md`.
+- Migration 000051 (schema approved by the user): `oauth_clients`, `oauth_requests`, `oauth_grants`, `oauth_codes`, `oauth_tokens` (only SHA-256 of codes and tokens) and `mcp_calls` (calls per connection per hour).
+- New `internal/oauth`, our own OAuth 2.1 authorization server: dynamic registration, code flow with PKCE S256 required, rotating refresh tokens, reuse detection that deletes the connection, revocation, RFC 8414 and RFC 9728 metadata. fosite was dropped: last release 2024-12 and reachable vulnerabilities in its dependencies (decided with the user).
+- The person approves in the app (`APP_BASE_URL/conectar`) through `GET/POST /connection-requests/{id}`; `GET /connections` and `DELETE /connections/{id}` list and revoke.
+- New `internal/mcpserver` at `POST /mcp` (official Go SDK v1.8.0, stateless, JSON): 9 read-only tools that call the app's own endpoints in process as the person, so membership and validation stay the app's. 60 calls an hour and 500 a day per connection, answers capped at 64 KB, every call audited as `mcp.call` (left out of `/me/activity`).
+- Hourly `oauth_cleanup` job. Open CORS without credentials on `/.well-known/oauth-*`, `/oauth/*` and `/mcp`.
+- Not done: hiding private expenses of other members (there is no private visibility yet; it arrives with 9.1 and the tools will follow the app's rule).
+
 ### 3.9 (API): duplicate detection
 - `POST /expenses/duplicates` (a POST so the description stays out of URLs and logs) lists up to 3 expenses of the space, from any member, that may be the one being loaded (criteria decided with the user): same currency, amount within 2%, date within a day, and a shared word of 3+ letters without accents (common words such as "con" or "pago" do not count). A pending bill of a variable recurring expense matches with a shared word and a date within 10 days, whatever its amount, and comes first. No schema change.
 - The Telegram card adds a warning line under the expense: "⚠️ Parecido a uno que ya está: Carrefour · $ 12.500 · ayer (Ana)", or for a pending bill "⚠️ Tenés pendiente Luz del 10/11. Si es esa factura, completala desde la app." The bot only warns; saving still takes ✅.

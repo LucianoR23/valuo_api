@@ -44,6 +44,13 @@ const (
 	AdminWaitlistExport = "admin.waitlist_exported"
 	AdminWaitlistDelete = "admin.waitlist_deleted"
 	AdminAIResumed      = "admin.ai_resumed"
+	// AI assistant connections (plan 8.6). Target: the client id.
+	OAuthConnected    = "oauth.connected"
+	OAuthDisconnected = "oauth.disconnected"
+	OAuthReuse        = "oauth.reuse_revoked"
+	// MCPCall: one tool call of a connected assistant (Target: the tool).
+	// Kept for review; not listed in the person's recent activity.
+	MCPCall = "mcp.call"
 )
 
 // Event: one thing that happened. UserID is the account it happened to

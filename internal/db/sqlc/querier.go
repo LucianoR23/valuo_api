@@ -78,6 +78,12 @@ type Querier interface {
 	CategoryInHousehold(ctx context.Context, arg CategoryInHouseholdParams) (bool, error)
 	// ✅: only the first tap saves.
 	ClaimTelegramDraft(ctx context.Context, arg ClaimTelegramDraftParams) (TelegramDraft, error)
+	CleanupMCPCalls(ctx context.Context, hour pgtype.Timestamptz) (int64, error)
+	// Clients nobody connected within a day of registering.
+	CleanupOAuthClients(ctx context.Context, createdAt pgtype.Timestamptz) (int64, error)
+	CleanupOAuthCodes(ctx context.Context, expiresAt pgtype.Timestamptz) (int64, error)
+	CleanupOAuthRequests(ctx context.Context, expiresAt pgtype.Timestamptz) (int64, error)
+	CleanupOAuthTokens(ctx context.Context, expiresAt pgtype.Timestamptz) (int64, error)
 	ClearOldAuditIPs(ctx context.Context) (int64, error)
 	ClearTelegramEditing(ctx context.Context, arg ClearTelegramEditingParams) error
 	// Confirma un draft con el monto real. Actualiza amount + amount_base + rate
@@ -99,6 +105,9 @@ type Querier interface {
 	// "Mi plata" goes with the account (plan 1.2).
 	CountHouseholdsOwnedByUser(ctx context.Context, userID uuid.UUID) (int64, error)
 	CountIncomesByHousehold(ctx context.Context, arg CountIncomesByHouseholdParams) (int64, error)
+	// Adds one call to the grant's current hour and returns the calls of that
+	// hour and of the last 24 hours, this one included.
+	CountMCPCall(ctx context.Context, arg CountMCPCallParams) (CountMCPCallRow, error)
 	CountRules(ctx context.Context, householdID uuid.UUID) (int64, error)
 	// Caps what an unknown sender can pile up in someone's list.
 	CountSenderPending(ctx context.Context, userID uuid.UUID) (int32, error)
@@ -143,6 +152,11 @@ type Querier interface {
 	CreateInstallment(ctx context.Context, arg CreateInstallmentParams) (ExpenseInstallment, error)
 	// ===== shares =====
 	CreateInstallmentShare(ctx context.Context, arg CreateInstallmentShareParams) error
+	// OAuth 2.1 server and MCP connections (plan 8.6).
+	CreateOAuthClient(ctx context.Context, arg CreateOAuthClientParams) (OauthClient, error)
+	CreateOAuthCode(ctx context.Context, arg CreateOAuthCodeParams) error
+	CreateOAuthRequest(ctx context.Context, arg CreateOAuthRequestParams) (uuid.UUID, error)
+	CreateOAuthToken(ctx context.Context, arg CreateOAuthTokenParams) error
 	// Queries de password_resets.
 	CreatePasswordReset(ctx context.Context, arg CreatePasswordResetParams) (PasswordReset, error)
 	// Queries de payment_methods. Métodos de pago del user.
@@ -185,6 +199,9 @@ type Querier interface {
 	DeleteDailyInsight(ctx context.Context, id uuid.UUID) error
 	DeleteExpense(ctx context.Context, id uuid.UUID) error
 	DeleteIncome(ctx context.Context, id uuid.UUID) error
+	DeleteOAuthGrant(ctx context.Context, id uuid.UUID) error
+	DeleteOAuthGrantForUser(ctx context.Context, arg DeleteOAuthGrantForUserParams) (int64, error)
+	DeleteOAuthRequest(ctx context.Context, arg DeleteOAuthRequestParams) (DeleteOAuthRequestRow, error)
 	DeleteOldAuditEvents(ctx context.Context) (int64, error)
 	// Retention (plan §8b): Gmail codes after a day; resolved, unreadable and
 	// ignored mails after 30 days. Open ones stay until the user acts.
@@ -257,6 +274,10 @@ type Querier interface {
 	GetLatestCreditCardPeriod(ctx context.Context, creditCardID uuid.UUID) (CreditCardPeriod, error)
 	GetLatestExchangeRate(ctx context.Context, arg GetLatestExchangeRateParams) (ExchangeRate, error)
 	GetNotificationPreferences(ctx context.Context, userID uuid.UUID) (NotificationPreference, error)
+	GetOAuthAccessToken(ctx context.Context, arg GetOAuthAccessTokenParams) (GetOAuthAccessTokenRow, error)
+	GetOAuthClient(ctx context.Context, id string) (OauthClient, error)
+	GetOAuthRequest(ctx context.Context, arg GetOAuthRequestParams) (GetOAuthRequestRow, error)
+	GetOAuthTokenGrant(ctx context.Context, tokenHash []byte) (GetOAuthTokenGrantRow, error)
 	GetPasswordResetByTokenHash(ctx context.Context, tokenHash string) (PasswordReset, error)
 	GetPaymentMethodByID(ctx context.Context, id uuid.UUID) (PaymentMethod, error)
 	// Busca por (owner, name) sin filtrar por is_active. El service la usa
@@ -332,6 +353,8 @@ type Querier interface {
 	// que la pantalla de configuración muestre los vigentes arriba y los
 	// "borrados" debajo, con opción de revivirlos.
 	ListAllPaymentMethodsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]PaymentMethod, error)
+	// Assistant tool calls (mcp.call, plan 8.6) stay out: hundreds a day would
+	// bury the sign-ins.
 	ListAuditEventsForUser(ctx context.Context, arg ListAuditEventsForUserParams) ([]AuditEvent, error)
 	// Lista los bancos activos del user, orden estable por nombre.
 	// Si algún día hace falta mostrar los desactivados, se agrega otra query.
@@ -402,6 +425,7 @@ type Querier interface {
 	// Devuelve la última fila por (currency, source) usando DISTINCT ON.
 	// Útil para el endpoint /current y para rehidratar el caché al arrancar.
 	ListLatestExchangeRates(ctx context.Context) ([]ExchangeRate, error)
+	ListOAuthGrantsForUser(ctx context.Context, userID uuid.UUID) ([]ListOAuthGrantsForUserRow, error)
 	// What the app shows: open expense mails and Gmail codes of the last day.
 	ListOpenInboundMessages(ctx context.Context, arg ListOpenInboundMessagesParams) ([]InboundMessage, error)
 	// The words that name each active payment method, for reading sentences
@@ -500,6 +524,9 @@ type Querier interface {
 	RevokeInvite(ctx context.Context, id uuid.UUID) (HouseholdInvite, error)
 	RevokeOtherUserSessions(ctx context.Context, arg RevokeOtherUserSessionsParams) error
 	RevokeUserSession(ctx context.Context, id uuid.UUID) error
+	// Marks a refresh token rotated. rotated_at was already set when it is
+	// presented again (reuse); the caller then revokes the grant.
+	RotateOAuthRefreshToken(ctx context.Context, arg RotateOAuthRefreshTokenParams) (RotateOAuthRefreshTokenRow, error)
 	// Conditional on the current hash, so two concurrent refreshes with the same
 	// token cannot both rotate: the loser gets no row.
 	RotateUserSession(ctx context.Context, arg RotateUserSessionParams) (UserSession, error)
@@ -613,6 +640,7 @@ type Querier interface {
 	// The categories with the most spending in the range (spent_at), for the
 	// AI summaries (plan 8.2). Base currency.
 	TopCategoriesSpentAtRange(ctx context.Context, arg TopCategoriesSpentAtRangeParams) ([]TopCategoriesSpentAtRangeRow, error)
+	TouchOAuthGrant(ctx context.Context, arg TouchOAuthGrantParams) error
 	UnclaimTelegramDraft(ctx context.Context, id uuid.UUID) error
 	// Linking a chat already linked to someone else moves it.
 	UnlinkTelegramChat(ctx context.Context, chatID int64) error
@@ -664,9 +692,13 @@ type Querier interface {
 	// (plan 5.2): a rate nobody confirmed for a day is stale.
 	UpsertExchangeRate(ctx context.Context, arg UpsertExchangeRateParams) error
 	UpsertNotificationPreferences(ctx context.Context, arg UpsertNotificationPreferencesParams) (NotificationPreference, error)
+	UpsertOAuthGrant(ctx context.Context, arg UpsertOAuthGrantParams) (uuid.UUID, error)
 	// Usado al bootstrappear un hogar (owner) y al sumar miembros (weight=1.0).
 	// También desde PATCH /households/{id}/split cuando el owner edita pesos.
 	UpsertSplitRule(ctx context.Context, arg UpsertSplitRuleParams) (HouseholdSplitRule, error)
+	// Marks the code used and returns it with its grant. used_at was already set
+	// when the code is presented a second time; the caller then revokes.
+	UseOAuthCode(ctx context.Context, arg UseOAuthCodeParams) (UseOAuthCodeRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

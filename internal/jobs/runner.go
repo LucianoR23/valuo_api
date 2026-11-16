@@ -28,6 +28,7 @@ var (
 	reportsSchedule   = monthly{8, 0}
 	fxInterval        = 15 * time.Minute
 	telegramInterval  = time.Hour
+	oauthInterval     = time.Hour
 	remindersSchedule = every{15 * time.Minute}
 )
 
@@ -180,6 +181,18 @@ func newRunner(pool *pgxpool.Pool, u Units, logger *slog.Logger, testOnly bool) 
 		return nil
 	})
 
+	addWorker(workers, time.Minute, func(ctx context.Context, _ OAuthCleanupArgs) error {
+		if u.OAuthCleanup == nil {
+			return nil
+		}
+		n, err := u.OAuthCleanup(ctx)
+		if err != nil {
+			return err
+		}
+		logger.InfoContext(ctx, "oauth cleanup: ok", "deleted", n)
+		return nil
+	})
+
 	periodic := []*river.PeriodicJob{
 		river.NewPeriodicJob(river.PeriodicInterval(fxInterval),
 			func() (river.JobArgs, *river.InsertOpts) { return FXRefreshArgs{}, nil },
@@ -226,6 +239,9 @@ func newRunner(pool *pgxpool.Pool, u Units, logger *slog.Logger, testOnly bool) 
 		river.NewPeriodicJob(river.PeriodicInterval(telegramInterval),
 			func() (river.JobArgs, *river.InsertOpts) { return TelegramCleanupArgs{}, nil },
 			&river.PeriodicJobOpts{ID: "telegram_cleanup", RunOnStart: true}),
+		river.NewPeriodicJob(river.PeriodicInterval(oauthInterval),
+			func() (river.JobArgs, *river.InsertOpts) { return OAuthCleanupArgs{}, nil },
+			&river.PeriodicJobOpts{ID: "oauth_cleanup", RunOnStart: true}),
 		// No RunOnStart: a restart mid-slot would send that slot late.
 		river.NewPeriodicJob(remindersSchedule,
 			func() (river.JobArgs, *river.InsertOpts) {

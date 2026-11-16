@@ -5,8 +5,10 @@ INSERT INTO audit_events (user_id, actor_id, action, target, ip, user_agent, dev
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
 
 -- name: ListAuditEventsForUser :many
+-- Assistant tool calls (mcp.call, plan 8.6) stay out: hundreds a day would
+-- bury the sign-ins.
 SELECT * FROM audit_events
-WHERE user_id = $1
+WHERE user_id = $1 AND action <> 'mcp.call'
 ORDER BY created_at DESC
 LIMIT $2;
 

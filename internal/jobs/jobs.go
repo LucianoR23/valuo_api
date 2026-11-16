@@ -32,6 +32,9 @@ type Units struct {
 	InboundCleanup func(ctx context.Context) (deleted int64, err error)
 	// TelegramCleanup deletes expired link codes and day-old drafts (plan 3.6).
 	TelegramCleanup func(ctx context.Context) (deleted int64, err error)
+	// OAuthCleanup deletes expired OAuth requests, codes and tokens, call
+	// counters and clients nobody connected (plan 8.6).
+	OAuthCleanup func(ctx context.Context) (deleted int64, err error)
 	// DeliverPush sends a push that waited for the end of quiet hours.
 	DeliverPush func(ctx context.Context, userID uuid.UUID, kind string, payload []byte) error
 	// DailyReminders sends the logging nudge of the 15-minute slot that
@@ -148,6 +151,14 @@ type TelegramCleanupArgs struct{}
 
 func (TelegramCleanupArgs) Kind() string { return "telegram_cleanup" }
 func (TelegramCleanupArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{Queue: queueMaintenance, MaxAttempts: 5}
+}
+
+// OAuthCleanupArgs deletes expired OAuth rows (hourly).
+type OAuthCleanupArgs struct{}
+
+func (OAuthCleanupArgs) Kind() string { return "oauth_cleanup" }
+func (OAuthCleanupArgs) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{Queue: queueMaintenance, MaxAttempts: 5}
 }
 
